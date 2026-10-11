@@ -2,18 +2,18 @@
 
 **A simple, open-source budget tracker for Android that you can talk to.**
 
-Log what you spend by voice or by hand, see where your money goes each month, and ask about it. A Gemini-powered assistant listens and answers out loud, and Google's Antigravity agent can study all your transactions and write a full spending report.
+Log what you spend by voice or by hand, see where your money goes each month, and ask about it. The assistant runs on Google's Antigravity CLI on your own computer, signed in with your Google account, so there are no API keys to manage.
 
 - **Talk to it.** Say "spent 250 on lunch" and it's recorded. Ask "how am I doing this month?" or "where can I cut back?" and hear the answer. Anything it changes comes with an Undo button.
-- **Deep analysis with Antigravity.** The Antigravity agent analyzes your transactions with code, in a sandbox with no internet access, and writes a report: trends, recurring payments, unusual spending and ways to save.
+- **Deep analysis.** Antigravity studies a year of your transactions and writes a report: trends, recurring payments, unusual spending and ways to save.
 - **Budgets that make sense.** A monthly budget and per-category budgets, what's left to spend per day, and where the month is heading.
-- **Yours.** No account, no ads, no tracking. Your data stays on your phone, and the AI features only run when you use them, with your own API key.
+- **Yours.** No account, no ads, no tracking. Your data stays on your phone, and the AI features only run when you use them.
 - **Free software,** licensed GPL-3.0-or-later.
 
 <p>
   <img src="docs/screenshots/home.png" width="200" alt="Home: spending this month against the budget, by category">
   <img src="docs/screenshots/transactions.png" width="200" alt="Transactions grouped by day, with search and filters">
-  <img src="docs/screenshots/assistant.png" width="200" alt="The assistant, with suggested questions and deep analysis">
+  <img src="docs/screenshots/assistant.png" width="200" alt="The assistant recording two purchases, with Undo buttons">
   <img src="docs/screenshots/home-dark.png" width="200" alt="Home in the dark theme">
 </p>
 
@@ -23,26 +23,35 @@ The screenshots use demo data.
 
 OpenTracker runs on Android 8.0 and newer. Build it yourself (see [Building](#building)), or download the debug APK from the latest successful run under **Actions** on GitHub and open it on your phone.
 
-## Connect Gemini and Antigravity
+## Connect Antigravity
 
-The tracking works without any of this. To turn on the assistant and deep analysis:
+The tracking works without any of this. The assistant and deep analysis need a computer with the [Antigravity CLI](https://antigravity.google) (`agy`), which the phone reaches through a small relay:
 
-1. Create an API key in [Google AI Studio](https://aistudio.google.com/apikey).
-2. In OpenTracker, open **Settings**, tap **Gemini API key** and paste it.
-3. Go to the **Assistant** tab and tap the mic, or tap the mic on the home screen.
+1. On your computer, install the Antigravity CLI and run `agy` once to sign in with your Google account.
+2. From the OpenTracker folder, start the relay:
 
-The assistant uses the `gemini-3.8-flash` model and deep analysis uses the `antigravity-preview-09-2026` agent, both through the Gemini [Interactions API](https://ai.google.dev/gemini-api/docs/interactions). When Google releases newer versions, you can change either name in Settings.
+   ```bash
+   python3 relay/opentracker_relay.py
+   ```
 
-Long-press the app icon for shortcuts that go straight to voice input or a new transaction.
+   It needs Python 3.10 or newer and `openssl`, and prints an address, a pairing code and a certificate fingerprint.
+3. In the app, open **Settings > Your PC**, enter the address and the code, and tap **Pair**. On Android 17, allow access to devices on your local network when asked.
+4. Go to the **Assistant** tab and tap the mic, or tap the mic on the home screen.
 
-### What gets sent to Google
+The phone has to reach your computer, so use the same Wi-Fi. Away from home, the relay also listens on your [Tailscale](https://tailscale.com) address if both devices are on your tailnet.
 
-- **Assistant:** each message sends your question with a summary of your data: categories and budgets, monthly totals for the past year, and the transactions of the last three months. Requests use `store: false`, so the conversation isn't kept as an interaction on Google's side.
-- **Deep analysis:** sends all your transactions as a CSV file into an Antigravity sandbox with network access turned off. Background runs have to be stored by Google while they work, so the app deletes the run once it has the report. Each run is capped at 400,000 tokens.
+To start the relay whenever you log in, run `python3 relay/opentracker_relay.py --install-service`. `--pairing` shows the pairing details again, and `--new-code` makes a new code, which unpairs every phone.
+
+The assistant model and the analysis model are picked in Settings, from the models your Antigravity plan offers. Long-press the app icon for shortcuts that go straight to voice input or a new transaction.
+
+### What goes where
+
+- **Phone to computer:** HTTPS with the relay's own certificate, which the app pins when you pair, and every request needs the pairing code. The code and certificate are stored only on the phone and left out of backups.
+- **Computer to Google:** the relay runs `agy` with your Antigravity sign-in, so messages go to Google like any other Antigravity conversation and count against your Antigravity quota. Each message carries your question with a summary of your data: categories and budgets, monthly totals for the past year, and the transactions of the last three months. Deep analysis sends a year of transactions. The conversations stay in `agy`'s history on your computer.
+- **Nothing else on your computer:** the relay runs `agy` as a custom agent without tools, so the model can't read files, browse or run commands there.
 - **Voice:** speech is turned into text by your phone's speech recognizer (on most phones, Google's), and replies are read aloud by the phone's text-to-speech.
-- **API key:** stored only on your phone and left out of backups.
 
-On the free tier, Google may use what you send to improve its products. See the [Gemini API terms](https://ai.google.dev/gemini-api/terms) and [pricing](https://ai.google.dev/gemini-api/docs/pricing).
+The app only uses Antigravity through Google's own CLI. Signing other apps in with an Antigravity login breaks Google's terms, and accounts have been suspended for it.
 
 ## Backups
 
@@ -61,16 +70,16 @@ Each CI run on GitHub also builds a debug APK, which you can download from the r
 
 ## How it's built
 
-Kotlin, Jetpack Compose with Material 3, Room and DataStore. There's no SDK for the Gemini API: it's called over HTTPS with a small client.
+Kotlin, Jetpack Compose with Material 3, Room and DataStore. The relay is a single Python file that only uses the standard library.
 
 | Folder | What's in it |
 | --- | --- |
 | `data/` | The Room database, settings, money formatting, CSV import and export, monthly summaries |
-| `ai/` | The Interactions API client, the assistant and its tools, the Antigravity analyst |
+| `ai/` | The relay client, the assistant and the changes it can make, the deep analysis |
 | `voice/` | Speech recognition and text-to-speech |
 | `ui/` | The Compose screens |
 
-All under `app/src/main/kotlin/io/github/geanyl17/opentracker/`.
+All under `app/src/main/kotlin/io/github/geanyl17/opentracker/`. The relay is `relay/opentracker_relay.py`.
 
 ## License
 
