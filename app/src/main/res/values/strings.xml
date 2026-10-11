@@ -1,0 +1,7 @@
+<resources>
+    <string name="app_name">OpenTracker</string>
+    <string name="shortcut_voice">Ask</string>
+    <string name="shortcut_voice_long">Talk to the assistant</string>
+    <string name="shortcut_add">Add</string>
+    <string name="shortcut_add_long">Add a transaction</string>
+</resources>

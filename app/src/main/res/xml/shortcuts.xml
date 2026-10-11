@@ -1,0 +1,25 @@
+<?xml version="1.0" encoding="utf-8"?>
+<shortcuts xmlns:android="http://schemas.android.com/apk/res/android">
+    <shortcut
+        android:enabled="true"
+        android:icon="@drawable/shortcut_voice"
+        android:shortcutId="voice"
+        android:shortcutLongLabel="@string/shortcut_voice_long"
+        android:shortcutShortLabel="@string/shortcut_voice">
+        <intent
+            android:action="io.github.geanyl17.opentracker.VOICE"
+            android:targetClass="io.github.geanyl17.opentracker.MainActivity"
+            android:targetPackage="io.github.geanyl17.opentracker" />
+    </shortcut>
+    <shortcut
+        android:enabled="true"
+        android:icon="@drawable/shortcut_add"
+        android:shortcutId="add"
+        android:shortcutLongLabel="@string/shortcut_add_long"
+        android:shortcutShortLabel="@string/shortcut_add">
+        <intent
+            android:action="io.github.geanyl17.opentracker.ADD"
+            android:targetClass="io.github.geanyl17.opentracker.MainActivity"
+            android:targetPackage="io.github.geanyl17.opentracker" />
+    </shortcut>
+</shortcuts>
