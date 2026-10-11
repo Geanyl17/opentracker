@@ -9,7 +9,7 @@ import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.jsonObject
 
 /**
- * A conversation with Antigravity through the relay. Each message is a single request carrying the rules, a fresh
+ * A conversation with the AI on the user's PC, through the relay. Each message is a single request carrying the rules, a fresh
  * snapshot of the data and the recent conversation; the answer's actions are applied here, on the phone.
  */
 class Assistant(
@@ -35,7 +35,7 @@ class Assistant(
                 is AssistantTools.Outcome.Rejected -> problems += outcome.reason
             }
         }
-        if (answer.reply.isBlank() && actions.isEmpty()) throw RelayException("Antigravity didn't answer. Try asking another way.")
+        if (answer.reply.isBlank() && actions.isEmpty()) throw RelayException("The AI didn't answer. Try asking another way.")
         history.addLast(Exchange(text, answer.reply, actions.map(::summary) + problems.map { "Couldn't: $it" }))
         while (history.size > MAX_EXCHANGES) history.removeFirst()
         return Reply(answer.reply, actions, problems)
@@ -79,7 +79,7 @@ class Assistant(
 
 data class Answer(val reply: String, val actions: List<JsonObject>)
 
-/** Reads the structured answer, or JSON in the text if agy didn't return one, or else treats the text as the reply. */
+/** Reads the structured answer, or JSON in the text if the CLI didn't return one, or else treats the text as the reply. */
 internal fun readAnswer(result: RelayResult): Answer {
     val json = result.structured
         ?: runCatching { Json.parseToJsonElement(result.text.substringAfter("```json").substringBefore("```").trim()).jsonObject }.getOrNull()

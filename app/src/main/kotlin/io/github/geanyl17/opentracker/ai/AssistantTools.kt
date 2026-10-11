@@ -132,7 +132,7 @@ class AssistantTools(private val ledger: Ledger, private val settings: SettingsS
     private fun String.toBigDecimalOrNull(): BigDecimal? = runCatching { BigDecimal(trim()) }.getOrNull()
 
     companion object {
-        /** The shape of every answer. It stays the same between requests, so the relay can start agy ahead of time. */
+        /** The shape of every answer. It stays the same between requests, so the relay can start the CLI ahead of time. */
         val schema: JsonObject = buildJsonObject {
             put("type", "object")
             putJsonObject("properties") {

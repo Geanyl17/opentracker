@@ -201,7 +201,7 @@ fun AssistantScreen(
                         )
                         Spacer(Modifier.width(6.dp))
                         Text(
-                            if (connected) "Antigravity on your PC" else "Not paired with your PC",
+                            if (connected) "AI on your PC" else "Not paired with your PC",
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                         )
@@ -700,10 +700,10 @@ private fun ConnectPrompt(padding: PaddingValues, onOpenSettings: () -> Unit) {
                 ) {
                     AppIcon(R.drawable.ic_computer, null, Modifier.size(26.dp), tint = AppTheme.colors.accent)
                 }
-                Text("Connect Antigravity", style = MaterialTheme.typography.headlineSmall, color = AppTheme.colors.onHero)
+                Text("Connect your PC", style = MaterialTheme.typography.headlineSmall, color = AppTheme.colors.onHero)
                 Text(
-                    "The assistant runs on the Antigravity CLI on your computer, signed in with your own Google account. " +
-                        "Start the OpenTracker relay on your PC, then pair this phone with it.",
+                    "The assistant runs on an AI coding tool on your computer, like Antigravity, Claude Code or Codex, " +
+                        "signed in with your own account. Start the OpenTracker relay on your PC, then pair this phone with it.",
                     style = MaterialTheme.typography.bodyMedium,
                     color = AppTheme.colors.onHeroMuted,
                 )

@@ -41,14 +41,14 @@ sealed interface Job {
 }
 
 /**
- * Talks to the OpenTracker relay on the user's computer (relay/opentracker_relay.py), which runs prompts through
- * the Antigravity CLI. The relay has a self-signed certificate, so the one seen when pairing is pinned.
+ * Talks to the OpenTracker relay on the user's computer (relay/opentracker_relay.py), which runs prompts through an
+ * AI coding CLI there. The relay has a self-signed certificate, so the one seen when pairing is pinned.
  */
 class RelayClient(private val pairing: () -> Pairing?) {
     suspend fun run(prompt: String, model: String, schema: JsonObject?): RelayResult {
         val body = buildJsonObject {
             put("prompt", prompt)
-            put("model", model)
+            if (model.isNotBlank()) put("model", model)
             if (schema != null) put("schema", schema)
         }
         val response = call(paired(), "POST", "/v1/run", body, readTimeout = 200_000)
@@ -58,7 +58,7 @@ class RelayClient(private val pairing: () -> Pairing?) {
     suspend fun startJob(prompt: String, model: String): String {
         val body = buildJsonObject {
             put("prompt", prompt)
-            put("model", model)
+            if (model.isNotBlank()) put("model", model)
         }
         return call(paired(), "POST", "/v1/jobs", body).string("id")
             ?: throw RelayException("The relay didn't start the analysis.")
@@ -68,7 +68,7 @@ class RelayClient(private val pairing: () -> Pairing?) {
         val response = call(paired(), "GET", "/v1/jobs/$id")
         return when (response.string("status")) {
             "done" -> Job.Done(response.string("text").orEmpty())
-            "failed" -> Job.Failed(response.string("error") ?: "Antigravity couldn't finish the analysis.")
+            "failed" -> Job.Failed(response.string("error") ?: "The analysis couldn't finish.")
             "cancelled" -> Job.Failed("The analysis was cancelled.")
             else -> Job.Running
         }
@@ -144,7 +144,7 @@ class RelayClient(private val pairing: () -> Pairing?) {
             throw RelayException("Couldn't set up a secure connection to your PC (${e.message}).")
         } catch (e: SocketTimeoutException) {
             val connecting = e.message.orEmpty().contains("connect", ignoreCase = true)
-            throw RelayException(if (connecting) unreachable(target) else "Antigravity took too long to answer. Try again.")
+            throw RelayException(if (connecting) unreachable(target) else "Your PC took too long to answer. Try again.")
         } catch (e: IOException) {
             throw RelayException(
                 when {

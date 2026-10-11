@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
-"""OpenTracker relay: lets the OpenTracker app use the Antigravity CLI (agy) on this computer.
+"""OpenTracker relay: lets the OpenTracker app use an AI coding CLI on this computer.
 
-The phone sends prompts over HTTPS. The relay runs each one through agy with your own Antigravity sign-in, as a
-custom agent without tools, so the model can't read files or run commands here. Only the Python standard library
-and openssl are needed.
+The phone sends prompts over HTTPS. The relay runs each one through Antigravity (agy), Claude Code (claude) or Codex
+(codex), signed in with your own account, with every tool turned off, so the model can't read files or run commands
+here. Only the Python standard library and openssl are needed.
 """
 
 import argparse
@@ -14,6 +14,7 @@ import os
 import re
 import secrets
 import shutil
+import signal
 import socket
 import ssl
 import subprocess
@@ -24,7 +25,7 @@ import uuid
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
-VERSION = "0.2.0"
+VERSION = "0.3.0"
 DEFAULT_PORT = 8765
 MAX_BODY = 8 * 1024 * 1024
 RUN_TIMEOUT = 3 * 60
@@ -34,8 +35,11 @@ JOB_TTL = 60 * 60
 MODEL_ID = re.compile(r"^[A-Za-z0-9._-]{1,80}$")
 CODE_ALPHABET = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"
 
+INSTRUCTIONS = """You help the user with their personal budget, using only the information in their message. You \
+can't read files, browse the web or run commands, so don't offer to."""
+
 # excludeDefaultComponents drops agy's built-in tools; finish is the one it needs to return structured output.
-AGENT = """---
+AGENT = f"""---
 name: opentracker
 description: Budget assistant for the OpenTracker app. Answers only from the message it's given.
 mainAgent: true
@@ -47,8 +51,7 @@ tools: [finish]
 ---
 # OpenTracker
 
-You help the user with their personal budget, using only the information in their message. You can't read files,
-browse the web or run commands, so don't offer to.
+{INSTRUCTIONS}
 """
 
 
@@ -133,33 +136,96 @@ def clean(text: str) -> str:
     return "\n".join(line for line in text.splitlines() if not is_status(line.strip())).strip()
 
 
-class Agy:
-    """Runs one prompt per agy process, keeping a process started ahead of time so replies skip agy's startup."""
+def strict_schema(schema):
+    """Rewrites a JSON schema for OpenAI's strict mode: every property required, optional ones nullable."""
+    if isinstance(schema, list):
+        return [strict_schema(item) for item in schema]
+    if not isinstance(schema, dict):
+        return schema
+    result = {key: strict_schema(value) for key, value in schema.items() if key != "properties"}
+    if isinstance(schema.get("properties"), dict):
+        required = set(schema.get("required", []))
+        properties = {}
+        for name, prop in schema["properties"].items():
+            prop = strict_schema(prop)
+            if name not in required and isinstance(prop, dict):
+                prop = dict(prop)
+                if isinstance(prop.get("type"), str):
+                    prop["type"] = [prop["type"], "null"]
+                if isinstance(prop.get("enum"), list):
+                    prop["enum"] = prop["enum"] + [None]
+            properties[name] = prop
+        result.update(properties=properties, required=list(properties), additionalProperties=False)
+    return result
+
+
+def kill(process: subprocess.Popen) -> None:
+    """Stops a CLI and anything it started. Some CLIs are launchers whose child would otherwise keep running."""
+    try:
+        os.killpg(process.pid, signal.SIGKILL)
+    except OSError:
+        pass
+
+
+def without_nulls(value):
+    if isinstance(value, dict):
+        return {key: without_nulls(item) for key, item in value.items() if item is not None}
+    if isinstance(value, list):
+        return [without_nulls(item) for item in value]
+    return value
+
+
+class Cli:
+    """A coding-agent CLI that the relay runs prompts through, set up so the model has no tools.
+
+    Each prompt gets its own process. One is started ahead of time, so replies skip the CLI's startup.
+    """
+
+    name = ""
+    command_name = ""
+    fast_model = None
+    strong_model = None
 
     def __init__(self, binary: str, workspace: Path):
         self.binary = binary
         self.workspace = workspace
+        workspace.mkdir(parents=True, exist_ok=True)
+        (workspace / "schemas").mkdir(exist_ok=True)
         self.lock = threading.Lock()
         self.warm = None
-        self.log = open(data_dir() / "agy.log", "a", buffering=1)
-        result = subprocess.run([binary, "--version"], capture_output=True, text=True, timeout=30)
-        self.version = result.stdout.strip() or "unknown"
-        agent = workspace / ".agents" / "agents" / "opentracker.md"
-        agent.parent.mkdir(parents=True, exist_ok=True)
-        agent.write_text(AGENT)
-        (workspace / "schemas").mkdir(exist_ok=True)
+        self.known = None
+        self.log = open(data_dir() / "cli.log", "a", buffering=1)
+        result = subprocess.run([binary, "--version"], capture_output=True, text=True, timeout=30,
+                                stdin=subprocess.DEVNULL)
+        self.version = (result.stdout.strip().splitlines() or ["unknown"])[0]
 
     def models(self) -> list[dict]:
-        result = subprocess.run([self.binary, "models"], cwd=self.workspace, capture_output=True, text=True,
-                                timeout=60, stdin=subprocess.DEVNULL)
-        models = []
-        for line in result.stdout.splitlines():
-            parts = line.split("\t")
-            if len(parts) == 2 and MODEL_ID.match(parts[0]):
-                models.append({"id": parts[0], "name": parts[1].strip()})
-        if not models:
-            raise RelayError("agy didn't list any models. Run agy once on this computer to sign in.")
-        return models
+        raise NotImplementedError
+
+    def command(self, model: str | None, schema: Path | None, fast: bool) -> list[str]:
+        raise NotImplementedError
+
+    def send(self, process: subprocess.Popen, prompt: str) -> None:
+        raise NotImplementedError
+
+    def answer(self, process: subprocess.Popen) -> dict:
+        """Reads the reply as {"text": ..., "structured": ...}, or raises RelayError."""
+        raise NotImplementedError
+
+    def pick_model(self, requested: str | None, fast: bool) -> str | None:
+        """The model the app asked for if this CLI has it, otherwise this CLI's default for the job."""
+        if requested in (self.fast_model, self.strong_model):
+            return requested
+        if requested:
+            now = time.monotonic()
+            if self.known is None or now - self.known[0] > WARM_MAX_AGE:
+                try:
+                    self.known = (now, {model["id"] for model in self.models()})
+                except (RelayError, OSError, subprocess.SubprocessError):
+                    self.known = (now, set())
+            if requested in self.known[1]:
+                return requested
+        return self.fast_model if fast else self.strong_model
 
     def schema_path(self, schema) -> Path | None:
         if schema is None:
@@ -170,36 +236,37 @@ class Agy:
             path.write_text(text)
         return path
 
-    def spawn(self, model: str, schema: Path | None) -> subprocess.Popen:
-        command = [self.binary, "--agent", "opentracker", "--model", model, "--disable-slash-commands",
-                   "--input-format", "stream-json", "--output-format", "stream-json"]
-        if schema is not None:
-            command += ["--json-schema", str(schema)]
-        process = subprocess.Popen(command + ["-p", ""], cwd=self.workspace, stdin=subprocess.PIPE,
-                                   stdout=subprocess.PIPE, stderr=self.log, text=True, encoding="utf-8", bufsize=1)
+    def spawn(self, model: str | None, schema: Path | None, fast: bool) -> subprocess.Popen:
+        process = subprocess.Popen(self.command(model, schema, fast), cwd=self.workspace, stdin=subprocess.PIPE,
+                                   stdout=subprocess.PIPE, stderr=self.log, text=True, encoding="utf-8", bufsize=1,
+                                   start_new_session=True)
         process.started = time.monotonic()
         return process
 
-    def run(self, prompt: str, model: str, schema, timeout: float) -> dict:
-        path = self.schema_path(schema)
-        key = (model, path)
-        process = self.take_warm(key)
+    def run(self, prompt: str, model: str | None, schema, timeout: float, fast: bool = True,
+            started=None) -> dict:
+        """Answers one prompt. [started] gets the process, so a long run can be cancelled."""
+        key = (self.pick_model(model, fast), self.schema_path(schema), fast)
+        process = self.take_warm(key) if started is None else None
         try:
             if process is not None:
-                started = time.monotonic()
+                begun = time.monotonic()
                 try:
                     return self.converse(process, prompt, timeout)
                 except RelayError:
                     # A process that fails right away has usually lost its session while waiting; a fresh one works.
                     self.finish(process)
-                    if time.monotonic() - started > 20:
+                    if time.monotonic() - begun > 20:
                         raise
-            process = self.spawn(model, path)
+            process = self.spawn(*key)
+            if started is not None:
+                started(process)
             return self.converse(process, prompt, timeout)
         finally:
             if process is not None:
                 self.finish(process)
-            threading.Thread(target=self.prewarm, args=(key,), daemon=True).start()
+            if started is None:
+                threading.Thread(target=self.prewarm, args=(key,), daemon=True).start()
 
     def take_warm(self, key):
         with self.lock:
@@ -221,36 +288,25 @@ class Agy:
             self.finish(old[1])
 
     def converse(self, process: subprocess.Popen, prompt: str, timeout: float) -> dict:
-        message = {"event": "user", "message": {"role": "user", "content": prompt}}
         expired = threading.Event()
 
         def expire():
             expired.set()
-            process.kill()
+            kill(process)
 
         timer = threading.Timer(timeout, expire)
         timer.start()
         try:
-            process.stdin.write(json.dumps(message) + "\n")
-            process.stdin.flush()
-            for line in process.stdout:
-                try:
-                    event = json.loads(line)
-                except ValueError:
-                    continue
-                if event.get("event") != "result":
-                    continue
-                result = event.get("result") or {}
-                if result.get("status") != "SUCCESS":
-                    raise RelayError(result.get("error") or "Antigravity couldn't answer.")
-                return {"text": clean(result.get("response") or ""), "structured": result.get("structured_output")}
+            self.send(process, prompt)
+            return self.answer(process)
         except (BrokenPipeError, OSError) as error:
-            raise RelayError(f"agy stopped unexpectedly ({error}).") from error
+            raise RelayError(f"{self.command_name} stopped unexpectedly ({error}).") from error
+        except RelayError:
+            if expired.is_set():
+                raise RelayError(f"{self.name} took too long to answer.") from None
+            raise
         finally:
             timer.cancel()
-        if expired.is_set():
-            raise RelayError("Antigravity took too long to answer.")
-        raise RelayError("agy stopped without answering. Run agy once on this computer to check that you're signed in.")
 
     def finish(self, process: subprocess.Popen) -> None:
         try:
@@ -260,24 +316,205 @@ class Agy:
         try:
             process.wait(timeout=5)
         except subprocess.TimeoutExpired:
-            process.kill()
+            pass
+        kill(process)
 
     def close(self) -> None:
         with self.lock:
             warm, self.warm = self.warm, None
         if warm is not None:
-            warm[1].kill()
+            kill(warm[1])
+
+    def not_signed_in(self) -> RelayError:
+        return RelayError(f"{self.command_name} stopped without answering. "
+                          f"Run {self.command_name} once on this computer to check that you're signed in.")
+
+
+class Agy(Cli):
+    """The Antigravity CLI, through a custom agent with none of agy's built-in tools."""
+
+    name = "Antigravity"
+    command_name = "agy"
+    fast_model = "gemini-3.8-flash-low"
+    strong_model = "gemini-3.8-flash-high"
+
+    def __init__(self, binary: str, workspace: Path):
+        super().__init__(binary, workspace)
+        agent = workspace / ".agents" / "agents" / "opentracker.md"
+        agent.parent.mkdir(parents=True, exist_ok=True)
+        agent.write_text(AGENT)
+
+    def models(self) -> list[dict]:
+        result = subprocess.run([self.binary, "models"], cwd=self.workspace, capture_output=True, text=True,
+                                timeout=60, stdin=subprocess.DEVNULL)
+        models = []
+        for line in result.stdout.splitlines():
+            parts = line.split("\t")
+            if len(parts) == 2 and MODEL_ID.match(parts[0]):
+                models.append({"id": parts[0], "name": parts[1].strip()})
+        if not models:
+            raise RelayError("agy didn't list any models. Run agy once on this computer to sign in.")
+        return models
+
+    def command(self, model, schema, fast):
+        command = [self.binary, "--agent", "opentracker", "--disable-slash-commands",
+                   "--input-format", "stream-json", "--output-format", "stream-json"]
+        if model:
+            command += ["--model", model]
+        if schema is not None:
+            command += ["--json-schema", str(schema)]
+        return command + ["-p", ""]
+
+    def send(self, process, prompt):
+        process.stdin.write(json.dumps({"event": "user", "message": {"role": "user", "content": prompt}}) + "\n")
+        process.stdin.flush()
+
+    def answer(self, process):
+        for line in process.stdout:
+            try:
+                event = json.loads(line)
+            except ValueError:
+                continue
+            if event.get("event") != "result":
+                continue
+            result = event.get("result") or {}
+            if result.get("status") != "SUCCESS":
+                raise RelayError(result.get("error") or "Antigravity couldn't answer.")
+            return {"text": clean(result.get("response") or ""), "structured": result.get("structured_output")}
+        raise self.not_signed_in()
+
+
+class Claude(Cli):
+    """Claude Code with every tool turned off, and without the user's settings, hooks, plugins or MCP servers."""
+
+    name = "Claude Code"
+    command_name = "claude"
+    fast_model = "haiku"
+    strong_model = "sonnet"
+
+    def models(self) -> list[dict]:
+        return [{"id": "haiku", "name": "Claude Haiku"}, {"id": "sonnet", "name": "Claude Sonnet"},
+                {"id": "opus", "name": "Claude Opus"}]
+
+    def command(self, model, schema, fast):
+        command = [self.binary, "-p", "--input-format", "stream-json", "--output-format", "stream-json", "--verbose",
+                   "--safe-mode", "--strict-mcp-config", "--tools", "", "--disable-slash-commands",
+                   "--no-session-persistence", "--system-prompt", INSTRUCTIONS]
+        if model:
+            command += ["--model", model]
+        if schema is not None:
+            command += ["--json-schema", schema.read_text()]
+        return command
+
+    def send(self, process, prompt):
+        process.stdin.write(json.dumps({"type": "user", "message": {"role": "user", "content": prompt}}) + "\n")
+        process.stdin.flush()
+
+    def answer(self, process):
+        for line in process.stdout:
+            try:
+                event = json.loads(line)
+            except ValueError:
+                continue
+            if event.get("type") != "result":
+                continue
+            if event.get("is_error") or event.get("subtype") != "success":
+                raise RelayError(event.get("result") or "Claude Code couldn't answer.")
+            return {"text": (event.get("result") or "").strip(), "structured": event.get("structured_output")}
+        raise self.not_signed_in()
+
+
+class Codex(Cli):
+    """Codex with its shell, web search and other tools turned off, in a read-only sandbox, ignoring the user's config."""
+
+    name = "Codex"
+    command_name = "codex"
+    TOOL_FEATURES = ["shell_tool", "unified_exec", "view_image", "multi_agent", "goals", "apps", "plugins", "hooks",
+                     "image_generation", "browser_use", "computer_use"]
+
+    def models(self) -> list[dict]:
+        result = subprocess.run([self.binary, "debug", "models"], cwd=self.workspace, capture_output=True, text=True,
+                                timeout=60, stdin=subprocess.DEVNULL)
+        try:
+            catalog = json.loads(result.stdout).get("models", [])
+        except (ValueError, AttributeError):
+            raise RelayError("codex didn't list any models.") from None
+        listed = sorted((m for m in catalog if m.get("visibility") == "list"), key=lambda m: m.get("priority", 99))
+        return [{"id": m["slug"], "name": m.get("display_name") or m["slug"]}
+                for m in listed if MODEL_ID.match(str(m.get("slug", "")))]
+
+    def command(self, model, schema, fast):
+        command = [self.binary, "exec", "--skip-git-repo-check", "--ephemeral", "--ignore-user-config",
+                   "--ignore-rules", "--sandbox", "read-only", "--cd", str(self.workspace),
+                   "-c", 'web_search="disabled"', "-c", "developer_instructions=" + json.dumps(INSTRUCTIONS)]
+        for feature in self.TOOL_FEATURES:
+            command += ["--disable", feature]
+        if fast:
+            command += ["-c", 'model_reasoning_effort="low"']
+        if model:
+            command += ["--model", model]
+        if schema is not None:
+            strict = schema.with_name(schema.stem + ".strict.json")
+            if not strict.exists():
+                strict.write_text(json.dumps(strict_schema(json.loads(schema.read_text()))))
+            command += ["--output-schema", str(strict)]
+        return command + ["--output-last-message", str(self.workspace / "replies" / uuid.uuid4().hex), "-"]
+
+    def spawn(self, model, schema, fast):
+        (self.workspace / "replies").mkdir(exist_ok=True)
+        process = subprocess.Popen(self.command(model, schema, fast), cwd=self.workspace, stdin=subprocess.PIPE,
+                                   stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, encoding="utf-8",
+                                   start_new_session=True)
+        process.started = time.monotonic()
+        process.reply = Path(process.args[-2])
+        process.structured = schema is not None
+        return process
+
+    def send(self, process, prompt):
+        process.stdin.write(prompt)
+        process.stdin.close()
+
+    def answer(self, process):
+        output = process.stdout.read()
+        process.wait()
+        self.log.write(output)
+        lines = output.splitlines()
+        try:
+            text = process.reply.read_text().strip()
+        except OSError:
+            text = ""
+        finally:
+            process.reply.unlink(missing_ok=True)
+        if process.returncode != 0 or not text:
+            errors = [line.removeprefix("ERROR:").strip() for line in lines if line.startswith("ERROR:")]
+            if errors:
+                raise RelayError(errors[-1])
+            raise self.not_signed_in()
+        structured = None
+        if process.structured:
+            try:
+                structured = without_nulls(json.loads(text))
+            except ValueError:
+                pass
+        return {"text": text, "structured": structured}
+
+    def finish(self, process):
+        super().finish(process)
+        process.reply.unlink(missing_ok=True)
+
+
+CLIS = {"agy": Agy, "claude": Claude, "codex": Codex}
 
 
 class Jobs:
     """Long runs, like the deep analysis, that the app starts and then polls."""
 
-    def __init__(self, agy: Agy):
-        self.agy = agy
+    def __init__(self, cli: Cli):
+        self.cli = cli
         self.jobs = {}
         self.lock = threading.Lock()
 
-    def start(self, prompt: str, model: str, schema) -> str:
+    def start(self, prompt: str, model: str | None, schema) -> str:
         job_id = uuid.uuid4().hex
         job = {"status": "running", "process": None, "finished": None}
         with self.lock:
@@ -286,16 +523,20 @@ class Jobs:
         threading.Thread(target=self.work, args=(job, prompt, model, schema), daemon=True).start()
         return job_id
 
-    def work(self, job: dict, prompt: str, model: str, schema) -> None:
-        process = self.agy.spawn(model, self.agy.schema_path(schema))
-        job["process"] = process
+    def work(self, job: dict, prompt: str, model: str | None, schema) -> None:
+        def started(process):
+            job["process"] = process
+            if job["status"] == "cancelled":
+                kill(process)
+
         try:
-            job.update(status="done", **self.agy.converse(process, prompt, JOB_TIMEOUT))
+            answer = self.cli.run(prompt, model, schema, JOB_TIMEOUT, fast=False, started=started)
+            if job["status"] == "running":
+                job.update(status="done", **answer)
         except RelayError as error:
             if job["status"] == "running":
                 job.update(status="failed", error=str(error))
         finally:
-            self.agy.finish(process)
             job["process"] = None
             job["finished"] = time.monotonic()
 
@@ -311,7 +552,7 @@ class Jobs:
             return False
         job["status"] = "cancelled"
         if job["process"] is not None:
-            job["process"].kill()
+            kill(job["process"])
         return True
 
     def prune(self) -> None:
@@ -323,11 +564,11 @@ class Jobs:
 class Relay(ThreadingHTTPServer):
     daemon_threads = True
 
-    def __init__(self, address, code: str, agy: Agy):
+    def __init__(self, address, code: str, cli: Cli):
         super().__init__(address, Handler)
         self.code = normalize_code(code)
-        self.agy = agy
-        self.jobs = Jobs(agy)
+        self.cli = cli
+        self.jobs = Jobs(cli)
         self.failures = {}
         self.failures_lock = threading.Lock()
 
@@ -341,9 +582,10 @@ class Handler(BaseHTTPRequestHandler):
         if not self.authorized():
             return
         if self.path == "/v1/status":
-            self.reply(200, {"relay": VERSION, "agy": self.server.agy.version})
+            cli = self.server.cli
+            self.reply(200, {"relay": VERSION, "cli": cli.name, "version": cli.version})
         elif self.path == "/v1/models":
-            self.guard(lambda: self.reply(200, {"models": self.server.agy.models()}))
+            self.guard(lambda: self.reply(200, {"models": self.server.cli.models()}))
         elif self.path.startswith("/v1/jobs/"):
             job = self.server.jobs.get(self.path.removeprefix("/v1/jobs/"))
             if job is None:
@@ -364,13 +606,15 @@ class Handler(BaseHTTPRequestHandler):
         prompt, model, schema = body.get("prompt"), body.get("model"), body.get("schema")
         if not isinstance(prompt, str) or not prompt.strip():
             return self.reply(400, {"error": "The prompt is empty."})
-        if not isinstance(model, str) or not MODEL_ID.match(model):
+        if model in ("", None):
+            model = None
+        elif not isinstance(model, str) or not MODEL_ID.match(model):
             return self.reply(400, {"error": "That isn't a valid model name."})
         if schema is not None and not isinstance(schema, dict):
             return self.reply(400, {"error": "The schema must be a JSON object."})
         if self.path == "/v1/jobs":
             return self.reply(202, {"id": self.server.jobs.start(prompt, model, schema)})
-        self.guard(lambda: self.reply(200, self.server.agy.run(prompt, model, schema, RUN_TIMEOUT)))
+        self.guard(lambda: self.reply(200, self.server.cli.run(prompt, model, schema, RUN_TIMEOUT)))
 
     def do_DELETE(self):
         if not self.authorized():
@@ -386,7 +630,7 @@ class Handler(BaseHTTPRequestHandler):
         except RelayError as error:
             self.reply(502, {"error": str(error)})
         except subprocess.TimeoutExpired:
-            self.reply(504, {"error": "agy took too long to answer."})
+            self.reply(504, {"error": f"{self.server.cli.name} took too long to answer."})
 
     def authorized(self) -> bool:
         client = self.client_address[0]
@@ -432,12 +676,12 @@ class Handler(BaseHTTPRequestHandler):
         print(f"{self.client_address[0]} {format % args}", flush=True)
 
 
-def install_service(agy_binary: str, port: int) -> None:
+def install_service(cli: str, binary: str, port: int) -> None:
     unit = Path.home() / ".config" / "systemd" / "user" / "opentracker-relay.service"
     unit.parent.mkdir(parents=True, exist_ok=True)
     unit.write_text(
-        "[Unit]\nDescription=OpenTracker relay for the Antigravity CLI\nAfter=network-online.target\n\n"
-        f"[Service]\nExecStart={sys.executable} {Path(__file__).resolve()} --agy {agy_binary} --port {port}\n"
+        "[Unit]\nDescription=OpenTracker relay\nAfter=network-online.target\n\n"
+        f"[Service]\nExecStart={sys.executable} {Path(__file__).resolve()} --cli {cli} --path {binary} --port {port}\n"
         "Restart=on-failure\n\n[Install]\nWantedBy=default.target\n"
     )
     subprocess.run(["systemctl", "--user", "daemon-reload"], check=True)
@@ -447,25 +691,31 @@ def install_service(agy_binary: str, port: int) -> None:
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Let the OpenTracker app use the Antigravity CLI on this computer.")
+    parser = argparse.ArgumentParser(description="Let the OpenTracker app use an AI coding CLI on this computer.")
     parser.add_argument("--port", type=int, default=DEFAULT_PORT, help=f"port to listen on (default {DEFAULT_PORT})")
     parser.add_argument("--host", default="0.0.0.0", help="address to listen on (default: all)")
-    parser.add_argument("--agy", default=shutil.which("agy"), help="path to the agy binary")
+    parser.add_argument("--cli", choices=list(CLIS), help="which CLI to use (default: the first one installed, "
+                        "in the order agy, claude, codex)")
+    parser.add_argument("--path", help="path to the CLI, if it isn't on your PATH")
     parser.add_argument("--pairing", action="store_true", help="show the pairing details and exit")
     parser.add_argument("--new-code", action="store_true", help="make a new pairing code, which unpairs every phone")
     parser.add_argument("--install-service", action="store_true", help="start the relay automatically when you log in")
     args = parser.parse_args()
 
-    if not args.agy or not Path(args.agy).exists():
-        sys.exit("Couldn't find agy, the Antigravity CLI. Install it, or pass its path with --agy.")
+    name = args.cli or next((cli for cli in CLIS if shutil.which(cli)), None)
+    if name is None:
+        sys.exit("Couldn't find agy, claude or codex. Install one and sign in, or pass its path with --cli and --path.")
+    binary = args.path or shutil.which(name)
+    if not binary or not Path(binary).exists():
+        sys.exit(f"Couldn't find {name}. Install it, or pass its path with --path.")
     if args.install_service:
-        return install_service(str(Path(args.agy).resolve()), args.port)
+        return install_service(name, str(Path(binary).resolve()), args.port)
 
     code = pairing_code(renew=args.new_code)
     cert, key, fingerprint = certificate()
     found = addresses(args.port)
     pairing = "\n".join(
-        ["", "Pair the app in OpenTracker > Settings > Antigravity on your PC:", f"  Address      {found[0]}"]
+        ["", "Pair the app in OpenTracker > Settings > AI on your PC:", f"  Address      {found[0]}"]
         + [f"               {address}" for address in found[1:]]
         + [f"  Code         {code}", f"  Certificate  {short_fingerprint(fingerprint)}", ""]
     )
@@ -473,14 +723,14 @@ def main() -> None:
         return print(pairing)
 
     data_dir().mkdir(parents=True, exist_ok=True)
-    agy = Agy(args.agy, data_dir() / "workspace")
-    server = Relay((args.host, args.port), code, agy)
+    cli = CLIS[name](binary, data_dir() / "workspace")
+    server = Relay((args.host, args.port), code, cli)
     context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
     context.minimum_version = ssl.TLSVersion.TLSv1_2
     context.load_cert_chain(cert, key)
     server.socket = context.wrap_socket(server.socket, server_side=True, do_handshake_on_connect=False)
 
-    print(f"OpenTracker relay {VERSION} is running with agy {agy.version}.")
+    print(f"OpenTracker relay {VERSION} is running with {cli.name} ({cli.version}).")
     print(pairing)
     print("Leave it running while you use the assistant. Press Ctrl+C to stop it.", flush=True)
     try:
@@ -488,7 +738,7 @@ def main() -> None:
     except KeyboardInterrupt:
         pass
     finally:
-        agy.close()
+        cli.close()
         server.server_close()
 
 

@@ -141,13 +141,13 @@ fun SettingsScreen(viewModel: SettingsViewModel, onBack: () -> Unit, onOpenCateg
                 }
             }
             item {
-                SettingsGroup("Antigravity on your PC") {
+                SettingsGroup("AI on your PC") {
                     SettingRow(R.drawable.ic_computer, "Your PC", pairing?.let { "Paired · ${it.address}" } ?: "Not paired") { editing = Editing.PAIR }
-                    SettingRow(R.drawable.ic_bolt, "Assistant model", current.assistantModel) {
+                    SettingRow(R.drawable.ic_bolt, "Assistant model", current.assistantModel.ifEmpty { DEFAULT_MODEL }) {
                         viewModel.loadModels()
                         editing = Editing.ASSISTANT_MODEL
                     }
-                    SettingRow(R.drawable.ic_query_stats, "Analysis model", current.analysisModel) {
+                    SettingRow(R.drawable.ic_query_stats, "Analysis model", current.analysisModel.ifEmpty { DEFAULT_MODEL }) {
                         viewModel.loadModels()
                         editing = Editing.ANALYSIS_MODEL
                     }
@@ -475,10 +475,12 @@ private fun PairDialog(
     )
 }
 
+private const val DEFAULT_MODEL = "Your PC's default"
+
 @Composable
 private fun ModelDialog(title: String, selected: String, state: ModelsState, onDismiss: () -> Unit, onSelect: (String) -> Unit) {
     if (state is ModelsState.Loaded) {
-        return ChoiceDialog(title, state.models.map { it.id to it.name }, selected, onDismiss, onSelect)
+        return ChoiceDialog(title, listOf("" to DEFAULT_MODEL) + state.models.map { it.id to it.name }, selected, onDismiss, onSelect)
     }
     AlertDialog(
         onDismissRequest = onDismiss,

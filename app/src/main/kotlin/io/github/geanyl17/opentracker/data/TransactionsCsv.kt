@@ -49,7 +49,7 @@ object Csv {
         }
 }
 
-/** The file format for exports, imports and the Antigravity sandbox: date,type,amount,category,note. */
+/** The file format for exports, imports and the deep analysis: date,type,amount,category,note. */
 object TransactionsCsv {
     private val header = listOf("date", "type", "amount", "category", "note")
     private val byteOrderMark = Char(0xFEFF)

@@ -196,8 +196,8 @@ private fun RunPanel(
             }
             Spacer(Modifier.height(14.dp))
             Text(
-                "Antigravity on your PC writes a report: trends, recurring payments, unusual spending and ways to save. " +
-                    "It uses your own Antigravity sign-in.",
+                "The AI on your PC writes a report: trends, recurring payments, unusual spending and ways to save. " +
+                    "It uses the account you're signed in with there.",
                 style = MaterialTheme.typography.bodyMedium,
                 color = app.onHeroMuted,
             )

@@ -23,18 +23,14 @@ data class Settings(
     val monthlyBudget: Long? = null,
     val theme: ThemeMode = ThemeMode.SYSTEM,
     val dynamicColor: Boolean = false,
-    val assistantModel: String = DEFAULT_ASSISTANT_MODEL,
-    val analysisModel: String = DEFAULT_ANALYSIS_MODEL,
+    /** Empty means the default of whichever CLI the relay runs. */
+    val assistantModel: String = "",
+    val analysisModel: String = "",
     val speakReplies: Boolean = true,
     val speechLanguage: String = "",
     val pendingAnalysis: String? = null,
     val pendingAnalysisSince: Long? = null,
-) {
-    companion object {
-        const val DEFAULT_ASSISTANT_MODEL = "gemini-3.8-flash-low"
-        const val DEFAULT_ANALYSIS_MODEL = "gemini-3.8-flash-high"
-    }
-}
+)
 
 private val Context.dataStore by preferencesDataStore(name = "settings")
 
@@ -67,14 +63,17 @@ class SettingsStore(private val context: Context) {
             monthlyBudget = this[Keys.monthlyBudget],
             theme = this[Keys.theme]?.let { runCatching { ThemeMode.valueOf(it) }.getOrNull() } ?: defaults.theme,
             dynamicColor = this[Keys.dynamicColor] ?: defaults.dynamicColor,
-            assistantModel = this[Keys.assistantModel] ?: defaults.assistantModel,
-            analysisModel = this[Keys.analysisModel] ?: defaults.analysisModel,
+            assistantModel = model(this[Keys.assistantModel], "gemini-3.8-flash-low"),
+            analysisModel = model(this[Keys.analysisModel], "gemini-3.8-flash-high"),
             speakReplies = this[Keys.speakReplies] ?: defaults.speakReplies,
             speechLanguage = this[Keys.speechLanguage] ?: defaults.speechLanguage,
             pendingAnalysis = this[Keys.pendingAnalysis],
             pendingAnalysisSince = this[Keys.pendingAnalysisSince],
         )
     }
+
+    // Version 0.1.0 saved its Antigravity defaults. The relay picks those same models by default, so they read as empty.
+    private fun model(saved: String?, oldDefault: String): String = saved?.takeUnless { it == oldDefault }.orEmpty()
 
     private fun Settings.writeTo(prefs: MutablePreferences) {
         prefs[Keys.currency] = currency

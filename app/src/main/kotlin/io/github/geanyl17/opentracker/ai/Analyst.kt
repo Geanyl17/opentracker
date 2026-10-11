@@ -4,7 +4,7 @@ import io.github.geanyl17.opentracker.data.Ledger
 import io.github.geanyl17.opentracker.data.Report
 import io.github.geanyl17.opentracker.data.SettingsStore
 
-/** Has Antigravity, through the relay, study a year of transactions and write a report. The app polls until it's done. */
+/** Has the AI on the user's PC, through the relay, study a year of transactions and write a report. The app polls until it's done. */
 class Analyst(
     private val relay: RelayClient,
     private val ledger: Ledger,
@@ -39,7 +39,7 @@ class Analyst(
             }
             is Job.Done -> {
                 clearPending()
-                if (job.text.isBlank()) return Status.Failed("Antigravity finished without writing a report. Try again.")
+                if (job.text.isBlank()) return Status.Failed("The analysis finished without a report. Try again.")
                 ledger.addReport(Report(createdAt = System.currentTimeMillis(), text = job.text))
                 Status.Done
             }
