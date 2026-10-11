@@ -1,11 +1,12 @@
 package io.github.geanyl17.opentracker.ui.editor
 
-import androidx.compose.foundation.clickable
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.foundation.layout.FlowRow
+import androidx.compose.foundation.layout.IntrinsicSize
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.consumeWindowInsets
@@ -15,26 +16,24 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Button
 import androidx.compose.material3.DatePicker
 import androidx.compose.material3.DatePickerDialog
 import androidx.compose.material3.ExperimentalMaterial3Api
-import androidx.compose.material3.FilterChip
-import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
-import androidx.compose.material3.SegmentedButton
-import androidx.compose.material3.SegmentedButtonDefaults
-import androidx.compose.material3.SingleChoiceSegmentedButtonRow
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
-import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.rememberDatePickerState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -46,12 +45,14 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.clip
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.graphics.SolidColor
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardCapitalization
 import androidx.compose.ui.text.input.KeyboardType
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import io.github.geanyl17.opentracker.R
@@ -60,8 +61,13 @@ import io.github.geanyl17.opentracker.data.Entry
 import io.github.geanyl17.opentracker.data.Kind
 import io.github.geanyl17.opentracker.data.Ledger
 import io.github.geanyl17.opentracker.ui.components.AppIcon
+import io.github.geanyl17.opentracker.ui.components.CategoryIcon
+import io.github.geanyl17.opentracker.ui.components.CategoryLooks
+import io.github.geanyl17.opentracker.ui.components.CircleIconButton
 import io.github.geanyl17.opentracker.ui.components.LocalMoney
+import io.github.geanyl17.opentracker.ui.components.TopBar
 import io.github.geanyl17.opentracker.ui.components.dayLabel
+import io.github.geanyl17.opentracker.ui.theme.AppTheme
 import io.github.geanyl17.opentracker.ui.theme.tabular
 import kotlinx.coroutines.launch
 import java.time.Instant
@@ -121,29 +127,27 @@ fun EditorScreen(
 
     Scaffold(
         topBar = {
-            TopAppBar(
-                title = {
-                    Text(
-                        when {
-                            entryId != null -> "Edit transaction"
-                            kind == Kind.INCOME -> "New income"
-                            else -> "New expense"
-                        },
-                    )
+            TopBar(
+                title = when {
+                    entryId != null -> "Edit transaction"
+                    kind == Kind.INCOME -> "New income"
+                    else -> "New expense"
                 },
-                navigationIcon = { IconButton(onClick = onClose) { AppIcon(R.drawable.ic_close, "Close") } },
+                onBack = onClose,
+                backIcon = R.drawable.ic_close,
+                backDescription = "Close",
                 actions = {
                     original?.let { entry ->
-                        IconButton(
+                        CircleIconButton(
+                            R.drawable.ic_delete,
+                            "Delete",
                             onClick = {
                                 scope.launch {
                                     ledger.delete(entry)
                                     onDeleted(entry)
                                 }
                             },
-                        ) {
-                            AppIcon(R.drawable.ic_delete, "Delete")
-                        }
+                        )
                     }
                 },
             )
@@ -153,16 +157,16 @@ fun EditorScreen(
                 Modifier
                     .navigationBarsPadding()
                     .imePadding()
-                    .padding(16.dp),
+                    .padding(horizontal = 16.dp, vertical = 12.dp),
             ) {
                 Button(
                     onClick = ::save,
                     enabled = cents != null && !saving,
                     modifier = Modifier
                         .fillMaxWidth()
-                        .height(52.dp),
+                        .height(56.dp),
                 ) {
-                    Text("Save")
+                    Text("Save", style = MaterialTheme.typography.titleSmall)
                 }
             }
         },
@@ -173,79 +177,63 @@ fun EditorScreen(
                 .padding(padding)
                 .consumeWindowInsets(padding)
                 .verticalScroll(rememberScrollState())
-                .padding(horizontal = 24.dp),
+                .padding(horizontal = 16.dp),
             verticalArrangement = Arrangement.spacedBy(20.dp),
         ) {
-            SingleChoiceSegmentedButtonRow(Modifier.fillMaxWidth()) {
-                Kind.entries.forEachIndexed { index, option ->
-                    SegmentedButton(
-                        selected = kind == option,
-                        onClick = {
-                            if (kind != option) {
-                                kind = option
-                                if (categories.none { it.id == categoryId && it.kind == option }) categoryId = null
-                            }
-                        },
-                        shape = SegmentedButtonDefaults.itemShape(index, Kind.entries.size),
-                        label = { Text(if (option == Kind.EXPENSE) "Expense" else "Income") },
-                    )
+            KindToggle(kind) { option ->
+                if (kind != option) {
+                    kind = option
+                    if (categories.none { it.id == categoryId && it.kind == option }) categoryId = null
                 }
             }
 
-            OutlinedTextField(
-                value = amount,
-                onValueChange = { value -> amount = value.filter { it.isDigit() || it == '.' || it == ',' } },
-                textStyle = MaterialTheme.typography.headlineMedium.tabular(),
-                prefix = {
-                    Text(
-                        LocalMoney.current.symbol,
-                        style = MaterialTheme.typography.headlineMedium,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
-                },
-                placeholder = { Text("0", style = MaterialTheme.typography.headlineMedium.tabular()) },
-                label = { Text("Amount") },
-                singleLine = true,
-                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal, imeAction = ImeAction.Next),
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .focusRequester(focus),
-            )
+            AmountField(amount, onChange = { value -> amount = value.filter { it.isDigit() || it == '.' || it == ',' } }, focus)
 
-            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                Text("Category", style = MaterialTheme.typography.titleSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                Text("Category", style = MaterialTheme.typography.titleSmall, modifier = Modifier.padding(start = 4.dp))
+                FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     categories.filter { it.kind == kind }.forEach { category ->
-                        FilterChip(
-                            selected = category.id == categoryId,
-                            onClick = { categoryId = if (category.id == categoryId) null else category.id },
-                            label = { Text(category.name) },
-                        )
+                        val selected = category.id == categoryId
+                        val color = CategoryLooks.of(category.name).color
+                        Surface(
+                            onClick = { categoryId = if (selected) null else category.id },
+                            shape = CircleShape,
+                            color = if (selected) color.copy(alpha = if (AppTheme.colors.dark) 0.28f else 0.16f) else AppTheme.colors.card,
+                            border = if (selected) BorderStroke(1.5.dp, color) else null,
+                        ) {
+                            Row(Modifier.padding(start = 6.dp, end = 14.dp, top = 6.dp, bottom = 6.dp), verticalAlignment = Alignment.CenterVertically) {
+                                CategoryIcon(category.name, size = 30.dp)
+                                Spacer(Modifier.width(8.dp))
+                                Text(category.name, style = MaterialTheme.typography.labelLarge)
+                            }
+                        }
                     }
                 }
             }
 
-            OutlinedTextField(
-                value = note,
-                onValueChange = { note = it },
-                label = { Text("Note") },
-                placeholder = { Text("What was it for?") },
-                singleLine = true,
-                keyboardOptions = KeyboardOptions(capitalization = KeyboardCapitalization.Sentences, imeAction = ImeAction.Done),
-                modifier = Modifier.fillMaxWidth(),
-            )
+            Surface(shape = RoundedCornerShape(20.dp), color = AppTheme.colors.card) {
+                Box(Modifier.fillMaxWidth().padding(horizontal = 20.dp, vertical = 18.dp)) {
+                    if (note.isEmpty()) {
+                        Text("What was it for?", style = MaterialTheme.typography.bodyLarge, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    }
+                    BasicTextField(
+                        value = note,
+                        onValueChange = { note = it },
+                        singleLine = true,
+                        textStyle = MaterialTheme.typography.bodyLarge.copy(color = MaterialTheme.colorScheme.onSurface),
+                        cursorBrush = SolidColor(MaterialTheme.colorScheme.onSurface),
+                        keyboardOptions = KeyboardOptions(capitalization = KeyboardCapitalization.Sentences, imeAction = ImeAction.Done),
+                        modifier = Modifier.fillMaxWidth(),
+                    )
+                }
+            }
 
-            Row(
-                Modifier
-                    .fillMaxWidth()
-                    .clip(RoundedCornerShape(12.dp))
-                    .clickable { pickingDate = true }
-                    .padding(vertical = 12.dp),
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                AppIcon(R.drawable.ic_calendar_today, null, tint = MaterialTheme.colorScheme.onSurfaceVariant)
-                Spacer(Modifier.width(16.dp))
-                Text(dayLabel(date), style = MaterialTheme.typography.bodyLarge)
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                val today = LocalDate.now()
+                DateChip("Today", selected = date == today) { date = today }
+                DateChip("Yesterday", selected = date == today.minusDays(1)) { date = today.minusDays(1) }
+                val custom = date != today && date != today.minusDays(1)
+                DateChip(if (custom) dayLabel(date) else "Pick a date", selected = custom, icon = true) { pickingDate = true }
             }
             Spacer(Modifier.height(8.dp))
         }
@@ -266,6 +254,85 @@ fun EditorScreen(
             dismissButton = { TextButton(onClick = { pickingDate = false }) { Text("Cancel") } },
         ) {
             DatePicker(state = pickerState)
+        }
+    }
+}
+
+@Composable
+private fun KindToggle(kind: Kind, onChange: (Kind) -> Unit) {
+    Surface(shape = CircleShape, color = AppTheme.colors.card, modifier = Modifier.fillMaxWidth()) {
+        Row(Modifier.padding(4.dp)) {
+            Kind.entries.forEach { option ->
+                val selected = kind == option
+                Surface(
+                    onClick = { onChange(option) },
+                    shape = CircleShape,
+                    color = if (selected) MaterialTheme.colorScheme.primary else AppTheme.colors.card,
+                    modifier = Modifier.weight(1f).height(44.dp),
+                ) {
+                    Box(contentAlignment = Alignment.Center) {
+                        Text(
+                            if (option == Kind.EXPENSE) "Expense" else "Income",
+                            style = MaterialTheme.typography.labelLarge,
+                            color = if (selected) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun AmountField(amount: String, onChange: (String) -> Unit, focus: FocusRequester) {
+    val style = MaterialTheme.typography.displayLarge.tabular().copy(textAlign = TextAlign.Center, color = MaterialTheme.colorScheme.onSurface)
+    Column(Modifier.fillMaxWidth().padding(vertical = 12.dp), horizontalAlignment = Alignment.CenterHorizontally) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Text(LocalMoney.current.symbol, style = MaterialTheme.typography.displaySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            Spacer(Modifier.width(6.dp))
+            Box(contentAlignment = Alignment.Center) {
+                if (amount.isEmpty()) Text("0", style = style.copy(color = MaterialTheme.colorScheme.outline))
+                BasicTextField(
+                    value = amount,
+                    onValueChange = onChange,
+                    singleLine = true,
+                    textStyle = style,
+                    cursorBrush = SolidColor(MaterialTheme.colorScheme.onSurface),
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal, imeAction = ImeAction.Next),
+                    modifier = Modifier.width(IntrinsicSize.Min).widthIn(min = 4.dp).focusRequester(focus),
+                )
+            }
+        }
+        Text(
+            "Amount",
+            style = MaterialTheme.typography.bodySmall.copy(fontWeight = FontWeight.SemiBold),
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+    }
+}
+
+@Composable
+private fun DateChip(label: String, selected: Boolean, icon: Boolean = false, onClick: () -> Unit) {
+    Surface(
+        onClick = onClick,
+        shape = CircleShape,
+        color = if (selected) MaterialTheme.colorScheme.primary else AppTheme.colors.card,
+    ) {
+        Row(Modifier.padding(horizontal = 16.dp, vertical = 10.dp), verticalAlignment = Alignment.CenterVertically) {
+            if (icon) {
+                AppIcon(
+                    R.drawable.ic_calendar_today,
+                    null,
+                    Modifier.size(18.dp),
+                    tint = if (selected) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                Spacer(Modifier.width(8.dp))
+            }
+            Text(
+                label,
+                style = MaterialTheme.typography.labelLarge,
+                color = if (selected) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onSurface,
+            )
         }
     }
 }

@@ -4,14 +4,19 @@ import android.Manifest
 import android.content.pm.PackageManager
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.annotation.DrawableRes
+import androidx.compose.animation.core.RepeatMode
+import androidx.compose.animation.core.animateFloat
 import androidx.compose.animation.core.animateFloatAsState
-import androidx.compose.foundation.BorderStroke
+import androidx.compose.animation.core.infiniteRepeatable
+import androidx.compose.animation.core.rememberInfiniteTransition
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ExperimentalLayoutApi
-import androidx.compose.foundation.layout.FlowRow
+import androidx.compose.foundation.layout.IntrinsicSize
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -25,28 +30,27 @@ import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.isImeVisible
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.text.selection.SelectionContainer
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Button
-import androidx.compose.material3.CircularProgressIndicator
-import androidx.compose.material3.ExperimentalMaterial3Api
-import androidx.compose.material3.FilledIconButton
-import androidx.compose.material3.IconButton
+import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.SnackbarHost
-import androidx.compose.material3.SuggestionChip
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
-import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
@@ -58,11 +62,15 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardCapitalization
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextDecoration
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.Lifecycle
@@ -71,22 +79,29 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import io.github.geanyl17.opentracker.R
 import io.github.geanyl17.opentracker.ai.AssistantAction
 import io.github.geanyl17.opentracker.data.Money
+import io.github.geanyl17.opentracker.ui.components.AppCard
 import io.github.geanyl17.opentracker.ui.components.AppIcon
+import io.github.geanyl17.opentracker.ui.components.CategoryIcon
+import io.github.geanyl17.opentracker.ui.components.CircleIconButton
 import io.github.geanyl17.opentracker.ui.components.LocalMoney
 import io.github.geanyl17.opentracker.ui.components.LocalSnackbar
+import io.github.geanyl17.opentracker.ui.components.ScreenTitle
 import io.github.geanyl17.opentracker.ui.components.dayLabel
+import io.github.geanyl17.opentracker.ui.theme.AppTheme
 import io.github.geanyl17.opentracker.voice.VoiceState
 import kotlinx.coroutines.launch
 import java.time.LocalDate
 
+private class Suggestion(val text: String, @param:DrawableRes val icon: Int)
+
 private val suggestions = listOf(
-    "How am I doing this month?",
-    "What did I spend the most on?",
-    "Where can I cut back?",
-    "Compare with last month",
+    Suggestion("How am I doing this month?", R.drawable.ic_speed),
+    Suggestion("What did I spend the most on?", R.drawable.ic_query_stats),
+    Suggestion("Where can I cut back?", R.drawable.ic_savings_fill),
+    Suggestion("Compare with last month", R.drawable.ic_calendar_today),
 )
 
-@OptIn(ExperimentalMaterial3Api::class, ExperimentalLayoutApi::class)
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
 fun AssistantScreen(
     viewModel: AssistantViewModel,
@@ -107,6 +122,7 @@ fun AssistantScreen(
     val listState = rememberLazyListState()
     var input by rememberSaveable { mutableStateOf("") }
     val connected = pairing != null
+    val chatting = messages.isNotEmpty() || busy || voice is VoiceState.Listening
 
     val micPermission = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
         if (granted) {
@@ -144,19 +160,34 @@ fun AssistantScreen(
 
     Scaffold(
         topBar = {
-            TopAppBar(
-                title = { Text("Assistant") },
-                actions = {
-                    if (messages.isNotEmpty() && !busy) {
-                        IconButton(onClick = viewModel::newChat) { AppIcon(R.drawable.ic_edit, "New chat") }
+            ScreenTitle(
+                "Assistant",
+                Modifier.background(MaterialTheme.colorScheme.background).statusBarsPadding().padding(top = 12.dp),
+                subtitle = {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Box(
+                            Modifier
+                                .size(8.dp)
+                                .clip(CircleShape)
+                                .background(if (connected) AppTheme.colors.accent else MaterialTheme.colorScheme.outline),
+                        )
+                        Spacer(Modifier.width(6.dp))
+                        Text(
+                            if (connected) "Antigravity on your PC" else "Not paired with your PC",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
                     }
-                    IconButton(onClick = onOpenReport) { AppIcon(R.drawable.ic_article, "Deep analysis") }
+                },
+                actions = {
+                    if (messages.isNotEmpty() && !busy) CircleIconButton(R.drawable.ic_edit_square, "New chat", viewModel::newChat)
+                    CircleIconButton(R.drawable.ic_query_stats, "Deep analysis", onOpenReport)
                 },
             )
         },
         bottomBar = {
             Column(Modifier.imePadding()) {
-                if (connected) {
+                if (connected && chatting) {
                     Composer(
                         text = input,
                         onTextChange = { input = it },
@@ -174,9 +205,13 @@ fun AssistantScreen(
     ) { padding ->
         when {
             !connected -> ConnectPrompt(padding, onOpenSettings)
-            messages.isEmpty() -> Intro(
+            !chatting -> Intro(
                 padding = padding,
                 pendingAnalysis = settings.pendingAnalysis != null,
+                input = input,
+                onInputChange = { input = it },
+                onSend = { send(input) },
+                onMic = ::listen,
                 onSuggestion = ::send,
                 onOpenReport = onOpenReport,
             )
@@ -184,7 +219,7 @@ fun AssistantScreen(
             else -> LazyColumn(
                 state = listState,
                 reverseLayout = true,
-                contentPadding = PaddingValues(top = padding.calculateTopPadding() + 8.dp, bottom = padding.calculateBottomPadding() + 16.dp),
+                contentPadding = PaddingValues(top = padding.calculateTopPadding() + 8.dp, bottom = padding.calculateBottomPadding() + 12.dp),
                 modifier = Modifier.fillMaxSize(),
             ) {
                 if (busy) item(key = "thinking") { Thinking() }
@@ -215,74 +250,113 @@ private fun Composer(
     Row(
         Modifier
             .fillMaxWidth()
-            .background(colors.surface)
-            .padding(start = 16.dp, end = 12.dp, top = 8.dp, bottom = 8.dp),
+            .padding(horizontal = 16.dp, vertical = 6.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        Box(
-            Modifier
+        Surface(
+            shape = RoundedCornerShape(28.dp),
+            color = AppTheme.colors.card,
+            shadowElevation = 2.dp,
+            modifier = Modifier
                 .weight(1f)
-                .heightIn(min = 48.dp)
-                .clip(RoundedCornerShape(24.dp))
-                .background(colors.surfaceContainerHigh)
-                .padding(horizontal = 18.dp, vertical = 12.dp),
-            contentAlignment = Alignment.CenterStart,
+                .heightIn(min = 56.dp),
         ) {
-            if (listening != null) {
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    LevelMeter(listening.level)
-                    Spacer(Modifier.width(12.dp))
-                    Text(
-                        listening.partial.ifEmpty { "Listening…" },
-                        style = MaterialTheme.typography.bodyLarge,
-                        color = if (listening.partial.isEmpty()) colors.onSurfaceVariant else colors.onSurface,
-                    )
+            Box(Modifier.padding(horizontal = 20.dp, vertical = 16.dp), contentAlignment = Alignment.CenterStart) {
+                if (listening != null) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Waveform(listening.level)
+                        Spacer(Modifier.width(12.dp))
+                        Text(
+                            listening.partial.ifEmpty { "Listening…" },
+                            style = MaterialTheme.typography.bodyLarge,
+                            color = if (listening.partial.isEmpty()) colors.onSurfaceVariant else colors.onSurface,
+                        )
+                    }
+                } else {
+                    MessageField(text, onTextChange, busy, onSend, "Ask, or say what you spent", singleLine = false)
                 }
-            } else {
-                BasicTextField(
-                    value = text,
-                    onValueChange = onTextChange,
-                    textStyle = MaterialTheme.typography.bodyLarge.copy(color = colors.onSurface),
-                    cursorBrush = SolidColor(colors.primary),
-                    maxLines = 5,
-                    keyboardOptions = KeyboardOptions(capitalization = KeyboardCapitalization.Sentences, imeAction = ImeAction.Send),
-                    keyboardActions = KeyboardActions(onSend = { if (!busy) onSend() }),
-                    decorationBox = { field ->
-                        if (text.isEmpty()) {
-                            Text("Ask, or say what you spent", style = MaterialTheme.typography.bodyLarge, color = colors.onSurfaceVariant)
-                        }
-                        field()
-                    },
-                    modifier = Modifier.fillMaxWidth(),
-                )
             }
         }
-        Spacer(Modifier.width(8.dp))
+        Spacer(Modifier.width(10.dp))
         when {
-            listening != null -> FilledIconButton(onClick = onStop, modifier = Modifier.size(48.dp)) {
-                AppIcon(R.drawable.ic_stop, "Stop listening")
-            }
-            text.isNotBlank() -> FilledIconButton(onClick = onSend, enabled = !busy, modifier = Modifier.size(48.dp)) {
-                AppIcon(R.drawable.ic_arrow_upward, "Send")
-            }
-            else -> FilledIconButton(onClick = onMic, enabled = !busy, modifier = Modifier.size(48.dp)) {
-                AppIcon(R.drawable.ic_mic, "Speak")
-            }
+            listening != null -> RoundButton(R.drawable.ic_stop, "Stop listening", onStop, AppTheme.colors.accent, AppTheme.colors.onAccent)
+            text.isNotBlank() -> RoundButton(R.drawable.ic_arrow_upward, "Send", onSend, colors.primary, colors.onPrimary, enabled = !busy)
+            else -> RoundButton(R.drawable.ic_mic_fill, "Speak", onMic, AppTheme.colors.accent, AppTheme.colors.onAccent, enabled = !busy)
         }
     }
 }
 
 @Composable
-private fun LevelMeter(level: Float) {
+private fun MessageField(
+    text: String,
+    onTextChange: (String) -> Unit,
+    busy: Boolean,
+    onSend: () -> Unit,
+    placeholder: String,
+    singleLine: Boolean,
+    modifier: Modifier = Modifier,
+) {
+    val colors = MaterialTheme.colorScheme
+    BasicTextField(
+        value = text,
+        onValueChange = onTextChange,
+        textStyle = MaterialTheme.typography.bodyLarge.copy(color = colors.onSurface),
+        cursorBrush = SolidColor(colors.onSurface),
+        singleLine = singleLine,
+        maxLines = if (singleLine) 1 else 5,
+        keyboardOptions = KeyboardOptions(capitalization = KeyboardCapitalization.Sentences, imeAction = ImeAction.Send),
+        keyboardActions = KeyboardActions(onSend = { if (!busy && text.isNotBlank()) onSend() }),
+        decorationBox = { field ->
+            if (text.isEmpty()) Text(placeholder, style = MaterialTheme.typography.bodyLarge, color = colors.onSurfaceVariant)
+            field()
+        },
+        modifier = modifier.fillMaxWidth(),
+    )
+}
+
+@Composable
+private fun RoundButton(
+    @DrawableRes icon: Int,
+    description: String,
+    onClick: () -> Unit,
+    container: Color,
+    content: Color,
+    enabled: Boolean = true,
+    size: Dp = 56.dp,
+) {
+    Surface(
+        onClick = onClick,
+        enabled = enabled,
+        shape = CircleShape,
+        color = if (enabled) container else container.copy(alpha = 0.4f),
+        shadowElevation = 2.dp,
+        modifier = Modifier.size(size),
+    ) {
+        Box(contentAlignment = Alignment.Center) {
+            AppIcon(icon, description, Modifier.size(size * 0.42f), tint = content)
+        }
+    }
+}
+
+/** Bars that move with the loudness of the voice. */
+@Composable
+private fun Waveform(level: Float) {
     val animated by animateFloatAsState(level, label = "level")
-    Row(Modifier.height(18.dp), horizontalArrangement = Arrangement.spacedBy(3.dp), verticalAlignment = Alignment.CenterVertically) {
-        listOf(0.55f, 1f, 0.75f, 0.4f).forEach { weight ->
+    val wobble by rememberInfiniteTransition(label = "wave").animateFloat(
+        initialValue = 0.85f,
+        targetValue = 1.15f,
+        animationSpec = infiniteRepeatable(tween(420), RepeatMode.Reverse),
+        label = "wobble",
+    )
+    Row(Modifier.height(22.dp), horizontalArrangement = Arrangement.spacedBy(3.dp), verticalAlignment = Alignment.CenterVertically) {
+        listOf(0.45f, 0.8f, 1f, 0.7f, 0.5f).forEachIndexed { index, weight ->
+            val motion = if (index % 2 == 0) wobble else 2f - wobble
             Box(
                 Modifier
-                    .width(3.dp)
-                    .fillMaxHeight(0.2f + 0.8f * animated * weight)
-                    .clip(RoundedCornerShape(2.dp))
-                    .background(MaterialTheme.colorScheme.primary),
+                    .width(4.dp)
+                    .fillMaxHeight((0.2f + 0.8f * animated * weight * motion).coerceIn(0.15f, 1f))
+                    .clip(CircleShape)
+                    .background(AppTheme.colors.accent),
             )
         }
     }
@@ -290,122 +364,185 @@ private fun LevelMeter(level: Float) {
 
 @Composable
 private fun UserBubble(text: String) {
-    Box(Modifier.fillMaxWidth().padding(start = 56.dp, end = 16.dp, top = 8.dp, bottom = 4.dp), contentAlignment = Alignment.CenterEnd) {
+    Box(Modifier.fillMaxWidth().padding(start = 64.dp, end = 16.dp, top = 10.dp, bottom = 4.dp), contentAlignment = Alignment.CenterEnd) {
         Text(
             text,
             style = MaterialTheme.typography.bodyLarge,
-            color = MaterialTheme.colorScheme.onSecondaryContainer,
+            color = MaterialTheme.colorScheme.onPrimary,
             modifier = Modifier
-                .clip(RoundedCornerShape(20.dp))
-                .background(MaterialTheme.colorScheme.secondaryContainer)
-                .padding(horizontal = 16.dp, vertical = 10.dp),
+                .clip(RoundedCornerShape(topStart = 22.dp, topEnd = 22.dp, bottomStart = 22.dp, bottomEnd = 6.dp))
+                .background(MaterialTheme.colorScheme.primary)
+                .padding(horizontal = 16.dp, vertical = 12.dp),
         )
+    }
+}
+
+@Composable
+private fun AssistantMark() {
+    Box(
+        Modifier.size(32.dp).clip(CircleShape).background(AppTheme.colors.accent),
+        contentAlignment = Alignment.Center,
+    ) {
+        AppIcon(R.drawable.ic_graphic_eq, null, Modifier.size(18.dp), tint = AppTheme.colors.onAccent)
     }
 }
 
 @Composable
 private fun ReplyBlock(reply: ChatMessage.Reply, onUndo: (Int) -> Unit) {
     val money = LocalMoney.current
-    Column(Modifier.fillMaxWidth().padding(start = 20.dp, end = 40.dp, top = 8.dp, bottom = 8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-        if (reply.text.isNotBlank()) SelectionContainer { Text(reply.text, style = MaterialTheme.typography.bodyLarge) }
-        reply.actions.forEachIndexed { index, item ->
-            Surface(
-                shape = RoundedCornerShape(12.dp),
-                border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
-                color = MaterialTheme.colorScheme.surface,
-            ) {
-                Row(Modifier.padding(start = 14.dp, end = 4.dp), verticalAlignment = Alignment.CenterVertically) {
-                    Text(
-                        describe(item.action, money),
-                        style = MaterialTheme.typography.bodyMedium,
-                        textDecoration = if (item.undone) TextDecoration.LineThrough else null,
-                        color = if (item.undone) MaterialTheme.colorScheme.onSurfaceVariant else MaterialTheme.colorScheme.onSurface,
-                        modifier = Modifier.weight(1f).padding(vertical = 12.dp),
-                    )
-                    if (item.undone) {
+    Row(Modifier.fillMaxWidth().padding(start = 16.dp, end = 24.dp, top = 10.dp, bottom = 6.dp)) {
+        AssistantMark()
+        Spacer(Modifier.width(12.dp))
+        Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+            if (reply.text.isNotBlank()) {
+                SelectionContainer { Text(reply.text, style = MaterialTheme.typography.bodyLarge, modifier = Modifier.padding(top = 4.dp)) }
+            }
+            reply.actions.forEachIndexed { index, item ->
+                Surface(shape = RoundedCornerShape(18.dp), color = AppTheme.colors.card) {
+                    Row(Modifier.padding(start = 10.dp, end = 4.dp, top = 8.dp, bottom = 8.dp), verticalAlignment = Alignment.CenterVertically) {
+                        CategoryIcon(categoryOf(item.action), size = 36.dp)
+                        Spacer(Modifier.width(12.dp))
                         Text(
-                            "Undone",
-                            style = MaterialTheme.typography.labelLarge,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            modifier = Modifier.padding(horizontal = 12.dp),
+                            describe(item.action, money),
+                            style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.SemiBold),
+                            textDecoration = if (item.undone) TextDecoration.LineThrough else null,
+                            color = if (item.undone) MaterialTheme.colorScheme.onSurfaceVariant else MaterialTheme.colorScheme.onSurface,
+                            modifier = Modifier.weight(1f),
                         )
-                    } else {
-                        TextButton(onClick = { onUndo(index) }) {
-                            AppIcon(R.drawable.ic_undo, null, Modifier.size(18.dp))
-                            Spacer(Modifier.width(6.dp))
-                            Text("Undo")
+                        if (item.undone) {
+                            Text(
+                                "Undone",
+                                style = MaterialTheme.typography.labelLarge,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                modifier = Modifier.padding(horizontal = 12.dp),
+                            )
+                        } else {
+                            TextButton(onClick = { onUndo(index) }) {
+                                AppIcon(R.drawable.ic_undo, null, Modifier.size(18.dp))
+                                Spacer(Modifier.width(6.dp))
+                                Text("Undo")
+                            }
                         }
                     }
                 }
             }
+            reply.error?.let { Text(it, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.error) }
         }
-        reply.error?.let { Text(it, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.error) }
     }
 }
 
 @Composable
 private fun FailureBlock(failure: ChatMessage.Failure, onRetry: () -> Unit) {
-    Column(Modifier.fillMaxWidth().padding(start = 20.dp, end = 40.dp, top = 8.dp, bottom = 8.dp)) {
-        Text(failure.text, style = MaterialTheme.typography.bodyLarge, color = MaterialTheme.colorScheme.error)
-        TextButton(onClick = onRetry, contentPadding = PaddingValues(horizontal = 0.dp)) { Text("Try again") }
+    Row(Modifier.fillMaxWidth().padding(start = 16.dp, end = 24.dp, top = 10.dp, bottom = 6.dp)) {
+        AssistantMark()
+        Spacer(Modifier.width(12.dp))
+        Column(Modifier.weight(1f)) {
+            Text(failure.text, style = MaterialTheme.typography.bodyLarge, color = MaterialTheme.colorScheme.error, modifier = Modifier.padding(top = 4.dp))
+            TextButton(onClick = onRetry, contentPadding = PaddingValues(horizontal = 0.dp)) { Text("Try again") }
+        }
     }
 }
 
 @Composable
 private fun Thinking() {
-    Row(Modifier.padding(horizontal = 20.dp, vertical = 12.dp), verticalAlignment = Alignment.CenterVertically) {
-        CircularProgressIndicator(Modifier.size(16.dp), strokeWidth = 2.dp)
+    val alpha by rememberInfiniteTransition(label = "thinking").animateFloat(
+        initialValue = 0.35f,
+        targetValue = 1f,
+        animationSpec = infiniteRepeatable(tween(600), RepeatMode.Reverse),
+        label = "alpha",
+    )
+    Row(Modifier.padding(horizontal = 16.dp, vertical = 10.dp), verticalAlignment = Alignment.CenterVertically) {
+        AssistantMark()
         Spacer(Modifier.width(12.dp))
-        Text("Thinking…", style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        Text(
+            "Thinking…",
+            style = MaterialTheme.typography.bodyMedium,
+            color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = alpha),
+        )
     }
 }
 
-@OptIn(ExperimentalLayoutApi::class)
 @Composable
-private fun Intro(padding: PaddingValues, pendingAnalysis: Boolean, onSuggestion: (String) -> Unit, onOpenReport: () -> Unit) {
+private fun Intro(
+    padding: PaddingValues,
+    pendingAnalysis: Boolean,
+    input: String,
+    onInputChange: (String) -> Unit,
+    onSend: () -> Unit,
+    onMic: () -> Unit,
+    onSuggestion: (String) -> Unit,
+    onOpenReport: () -> Unit,
+) {
     Column(
         Modifier
             .fillMaxSize()
             .padding(padding)
-            .padding(horizontal = 24.dp, vertical = 16.dp),
-        verticalArrangement = Arrangement.spacedBy(16.dp),
+            .verticalScroll(rememberScrollState())
+            .padding(horizontal = 16.dp),
+        horizontalAlignment = Alignment.CenterHorizontally,
     ) {
-        Text("Ask about your money", style = MaterialTheme.typography.headlineSmall)
+        Spacer(Modifier.height(20.dp))
+        RoundButton(R.drawable.ic_mic_fill, "Speak", onMic, AppTheme.colors.accent, AppTheme.colors.onAccent, size = 104.dp)
+        Spacer(Modifier.height(18.dp))
+        Text("Tap and talk", style = MaterialTheme.typography.headlineSmall)
+        Spacer(Modifier.height(6.dp))
         Text(
-            "Talk or type. Say something like “Spent 250 on lunch” and it's recorded, or ask how your month is going.",
-            style = MaterialTheme.typography.bodyLarge,
+            "Say “Spent 250 on lunch” and it's recorded, or ask how your month is going.",
+            style = MaterialTheme.typography.bodyMedium,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
+            textAlign = TextAlign.Center,
+            modifier = Modifier.padding(horizontal = 24.dp),
         )
-        FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            suggestions.forEach { suggestion ->
-                SuggestionChip(onClick = { onSuggestion(suggestion) }, label = { Text(suggestion) })
+        Spacer(Modifier.height(24.dp))
+        suggestions.chunked(2).forEach { row ->
+            Row(Modifier.fillMaxWidth().height(IntrinsicSize.Min).padding(bottom = 10.dp), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                row.forEach { suggestion ->
+                    Surface(
+                        onClick = { onSuggestion(suggestion.text) },
+                        shape = RoundedCornerShape(20.dp),
+                        color = AppTheme.colors.card,
+                        modifier = Modifier.weight(1f).fillMaxHeight(),
+                    ) {
+                        Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                            AppIcon(suggestion.icon, null, Modifier.size(22.dp), tint = MaterialTheme.colorScheme.onSurfaceVariant)
+                            Text(suggestion.text, style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.SemiBold))
+                        }
+                    }
+                }
             }
         }
-        Spacer(Modifier.height(8.dp))
-        Surface(
-            onClick = onOpenReport,
-            shape = RoundedCornerShape(16.dp),
-            border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
-            color = MaterialTheme.colorScheme.surface,
-        ) {
-            Row(Modifier.padding(16.dp), verticalAlignment = Alignment.CenterVertically) {
-                AppIcon(R.drawable.ic_article, null, tint = MaterialTheme.colorScheme.primary)
-                Spacer(Modifier.width(16.dp))
+        AppCard(padding = PaddingValues(start = 20.dp, end = 6.dp, top = 6.dp, bottom = 6.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                MessageField(input, onInputChange, busy = false, onSend, "Or type a question", singleLine = true, modifier = Modifier.weight(1f))
+                if (input.isNotBlank()) {
+                    RoundButton(R.drawable.ic_arrow_upward, "Send", onSend, MaterialTheme.colorScheme.primary, MaterialTheme.colorScheme.onPrimary, size = 44.dp)
+                } else {
+                    Spacer(Modifier.height(44.dp))
+                }
+            }
+        }
+        Spacer(Modifier.height(10.dp))
+        Surface(onClick = onOpenReport, shape = RoundedCornerShape(24.dp), color = AppTheme.colors.hero, modifier = Modifier.fillMaxWidth()) {
+            Row(Modifier.padding(18.dp), verticalAlignment = Alignment.CenterVertically) {
+                Box(
+                    Modifier.size(44.dp).clip(CircleShape).background(AppTheme.colors.heroTrack),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    AppIcon(R.drawable.ic_query_stats, null, Modifier.size(22.dp), tint = AppTheme.colors.accent)
+                }
+                Spacer(Modifier.width(14.dp))
                 Column(Modifier.weight(1f)) {
-                    Text("Deep analysis with Antigravity", style = MaterialTheme.typography.titleSmall)
+                    Text("Deep analysis", style = MaterialTheme.typography.titleSmall, color = AppTheme.colors.onHero)
                     Text(
-                        if (pendingAnalysis) {
-                            "Analysis in progress…"
-                        } else {
-                            "Antigravity studies a year of your transactions and writes a full report. Takes a minute or two."
-                        },
-                        style = MaterialTheme.typography.bodyMedium,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        if (pendingAnalysis) "Analysis in progress…" else "A full report on a year of your spending",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = AppTheme.colors.onHeroMuted,
                     )
                 }
-                AppIcon(R.drawable.ic_chevron_right, null, tint = MaterialTheme.colorScheme.onSurfaceVariant)
+                AppIcon(R.drawable.ic_chevron_right, null, tint = AppTheme.colors.onHeroMuted)
             }
         }
+        Spacer(Modifier.height(16.dp))
     }
 }
 
@@ -415,18 +552,40 @@ private fun ConnectPrompt(padding: PaddingValues, onOpenSettings: () -> Unit) {
         Modifier
             .fillMaxSize()
             .padding(padding)
-            .padding(24.dp),
-        verticalArrangement = Arrangement.spacedBy(16.dp),
+            .padding(16.dp),
     ) {
-        Text("Connect Antigravity", style = MaterialTheme.typography.headlineSmall)
-        Text(
-            "The assistant runs on the Antigravity CLI on your computer, signed in with your own Google account. " +
-                "Start the OpenTracker relay on your PC, then pair this phone with it.",
-            style = MaterialTheme.typography.bodyLarge,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-        )
-        Button(onClick = onOpenSettings) { Text("Pair with your PC") }
+        Surface(shape = RoundedCornerShape(28.dp), color = AppTheme.colors.hero, modifier = Modifier.fillMaxWidth()) {
+            Column(Modifier.padding(24.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
+                Box(
+                    Modifier.size(52.dp).clip(CircleShape).background(AppTheme.colors.heroTrack),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    AppIcon(R.drawable.ic_computer, null, Modifier.size(26.dp), tint = AppTheme.colors.accent)
+                }
+                Text("Connect Antigravity", style = MaterialTheme.typography.headlineSmall, color = AppTheme.colors.onHero)
+                Text(
+                    "The assistant runs on the Antigravity CLI on your computer, signed in with your own Google account. " +
+                        "Start the OpenTracker relay on your PC, then pair this phone with it.",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = AppTheme.colors.onHeroMuted,
+                )
+                Button(
+                    onClick = onOpenSettings,
+                    colors = ButtonDefaults.buttonColors(containerColor = AppTheme.colors.onHero, contentColor = AppTheme.colors.hero),
+                    modifier = Modifier.height(52.dp),
+                ) {
+                    Text("Pair with your PC", style = MaterialTheme.typography.labelLarge)
+                }
+            }
+        }
     }
+}
+
+private fun categoryOf(action: AssistantAction): String? = when (action) {
+    is AssistantAction.Added -> action.category
+    is AssistantAction.Updated -> action.category
+    is AssistantAction.Deleted -> action.category
+    is AssistantAction.BudgetChanged -> action.category?.name
 }
 
 private fun describe(action: AssistantAction, money: Money): String {

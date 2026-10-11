@@ -5,10 +5,13 @@ import android.content.pm.PackageManager
 import android.os.Build
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.annotation.DrawableRes
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -23,7 +26,6 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.CircularProgressIndicator
-import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
@@ -32,7 +34,6 @@ import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
-import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -47,6 +48,7 @@ import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalUriHandler
 import androidx.compose.ui.text.font.FontFamily
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardCapitalization
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
@@ -57,12 +59,13 @@ import io.github.geanyl17.opentracker.ai.RelayClient
 import io.github.geanyl17.opentracker.data.Pairing
 import io.github.geanyl17.opentracker.data.ThemeMode
 import io.github.geanyl17.opentracker.ui.components.AmountDialog
+import io.github.geanyl17.opentracker.ui.components.AppCard
 import io.github.geanyl17.opentracker.ui.components.AppIcon
 import io.github.geanyl17.opentracker.ui.components.ChoiceDialog
 import io.github.geanyl17.opentracker.ui.components.LocalMoney
 import io.github.geanyl17.opentracker.ui.components.LocalSnackbar
-import io.github.geanyl17.opentracker.ui.components.SectionHeader
 import io.github.geanyl17.opentracker.ui.components.TextFieldDialog
+import io.github.geanyl17.opentracker.ui.components.TopBar
 import java.time.LocalDate
 import java.util.Currency
 import java.util.Locale
@@ -71,7 +74,6 @@ private enum class Editing { BUDGET, CURRENCY, PAIR, ASSISTANT_MODEL, ANALYSIS_M
 
 private const val SOURCE_URL = "https://github.com/Geanyl17/opentracker"
 
-@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun SettingsScreen(viewModel: SettingsViewModel, onBack: () -> Unit, onOpenCategories: () -> Unit) {
     val settings by viewModel.settings.collectAsStateWithLifecycle()
@@ -118,77 +120,72 @@ fun SettingsScreen(viewModel: SettingsViewModel, onBack: () -> Unit, onOpenCateg
     }
 
     Scaffold(
-        topBar = {
-            TopAppBar(
-                title = { Text("Settings") },
-                navigationIcon = { IconButton(onClick = onBack) { AppIcon(R.drawable.ic_arrow_back, "Back") } },
-            )
-        },
+        topBar = { TopBar("Settings", onBack) },
         snackbarHost = { SnackbarHost(LocalSnackbar.current) },
     ) { padding ->
         val current = settings ?: return@Scaffold
         val money = LocalMoney.current
-        LazyColumn(contentPadding = PaddingValues(top = padding.calculateTopPadding(), bottom = padding.calculateBottomPadding() + 24.dp)) {
-            item { SectionHeader("Budget") }
+        LazyColumn(
+            contentPadding = PaddingValues(start = 16.dp, end = 16.dp, top = padding.calculateTopPadding() + 4.dp, bottom = padding.calculateBottomPadding() + 24.dp),
+            verticalArrangement = Arrangement.spacedBy(20.dp),
+        ) {
             item {
-                SettingRow("Monthly budget", current.monthlyBudget?.let(money::format) ?: "Not set") { editing = Editing.BUDGET }
-            }
-            item {
-                SettingRow("Currency", "${money.currency.currencyCode} · ${money.currency.getDisplayName(locale)}") {
-                    editing = Editing.CURRENCY
-                }
-            }
-            item { SettingRow("Categories", "Names and budgets for each category", onClick = onOpenCategories) }
-
-            item { SectionHeader("Antigravity on your PC") }
-            item {
-                SettingRow("Your PC", pairing?.let { "Paired · ${it.address}" } ?: "Not paired") { editing = Editing.PAIR }
-            }
-            item {
-                SettingRow("Assistant model", current.assistantModel) {
-                    viewModel.loadModels()
-                    editing = Editing.ASSISTANT_MODEL
+                SettingsGroup("Budget") {
+                    SettingRow(R.drawable.ic_account_balance_wallet, "Monthly budget", current.monthlyBudget?.let(money::format) ?: "Not set") {
+                        editing = Editing.BUDGET
+                    }
+                    SettingRow(R.drawable.ic_payments, "Currency", "${money.currency.currencyCode} · ${money.currency.getDisplayName(locale)}") {
+                        editing = Editing.CURRENCY
+                    }
+                    SettingRow(R.drawable.ic_category, "Categories", "Names and budgets", onClick = onOpenCategories)
                 }
             }
             item {
-                SettingRow("Analysis model", current.analysisModel) {
-                    viewModel.loadModels()
-                    editing = Editing.ANALYSIS_MODEL
-                }
-            }
-            item {
-                SwitchRow("Read replies aloud", "Speak the assistant's answers", current.speakReplies) { on ->
-                    viewModel.update { it.copy(speakReplies = on) }
-                }
-            }
-            item {
-                SettingRow("Speech language", current.speechLanguage.ifBlank { "Phone default" }) { editing = Editing.LANGUAGE }
-            }
-
-            item { SectionHeader("Appearance") }
-            item { SettingRow("Theme", current.theme.label) { editing = Editing.THEME } }
-            if (Build.VERSION.SDK_INT >= 31) {
-                item {
-                    SwitchRow("Wallpaper colors", "Use colors from your wallpaper", current.dynamicColor) { on ->
-                        viewModel.update { it.copy(dynamicColor = on) }
+                SettingsGroup("Antigravity on your PC") {
+                    SettingRow(R.drawable.ic_computer, "Your PC", pairing?.let { "Paired · ${it.address}" } ?: "Not paired") { editing = Editing.PAIR }
+                    SettingRow(R.drawable.ic_bolt, "Assistant model", current.assistantModel) {
+                        viewModel.loadModels()
+                        editing = Editing.ASSISTANT_MODEL
+                    }
+                    SettingRow(R.drawable.ic_query_stats, "Analysis model", current.analysisModel) {
+                        viewModel.loadModels()
+                        editing = Editing.ANALYSIS_MODEL
                     }
                 }
             }
-
-            item { SectionHeader("Data") }
             item {
-                SettingRow("Export to CSV", "Save all transactions as a spreadsheet file") {
-                    exporter.launch("opentracker-${LocalDate.now()}.csv")
+                SettingsGroup("Voice") {
+                    SwitchRow(R.drawable.ic_record_voice_over, "Read replies aloud", "Speak the assistant's answers", current.speakReplies) { on ->
+                        viewModel.update { it.copy(speakReplies = on) }
+                    }
+                    SettingRow(R.drawable.ic_translate, "Speech language", current.speechLanguage.ifBlank { "Phone default" }) { editing = Editing.LANGUAGE }
                 }
             }
             item {
-                SettingRow("Import from CSV", "Add transactions from a file with date, type, amount, category and note columns") {
-                    importer.launch(arrayOf("text/*", "application/csv", "application/vnd.ms-excel"))
+                SettingsGroup("Appearance") {
+                    SettingRow(R.drawable.ic_palette, "Theme", current.theme.label) { editing = Editing.THEME }
+                    if (Build.VERSION.SDK_INT >= 31) {
+                        SwitchRow(R.drawable.ic_wallpaper, "Wallpaper colors", "Use colors from your wallpaper", current.dynamicColor) { on ->
+                            viewModel.update { it.copy(dynamicColor = on) }
+                        }
+                    }
                 }
             }
-
-            item { SectionHeader("About") }
-            item { SettingRow("OpenTracker $version", "Free and open source, under the GPL-3.0 license") { uriHandler.openUri(SOURCE_URL) } }
+            item {
+                SettingsGroup("Data") {
+                    SettingRow(R.drawable.ic_download, "Export to CSV", "Save all transactions as a spreadsheet file") {
+                        exporter.launch("opentracker-${LocalDate.now()}.csv")
+                    }
+                    SettingRow(R.drawable.ic_upload, "Import from CSV", "Add transactions from a CSV file") {
+                        importer.launch(arrayOf("text/*", "application/csv", "application/vnd.ms-excel"))
+                    }
+                }
+            }
+            item {
+                SettingsGroup("About") {
+                    SettingRow(R.drawable.ic_info, "OpenTracker $version", "Free and open source, under the GPL-3.0 license") { uriHandler.openUri(SOURCE_URL) }
+                }
+            }
         }
 
         when (editing) {
@@ -284,36 +281,69 @@ private val ThemeMode.label: String
     }
 
 @Composable
-fun SettingRow(title: String, value: String? = null, onClick: () -> Unit) {
-    Column(
-        Modifier
-            .fillMaxWidth()
-            .clickable(onClick = onClick)
-            .heightIn(min = 64.dp)
-            .padding(horizontal = 24.dp, vertical = 12.dp),
-    ) {
-        Text(title, style = MaterialTheme.typography.bodyLarge)
-        if (value != null) {
-            Text(value, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
-        }
+fun SettingsGroup(title: String, content: @Composable ColumnScope.() -> Unit) {
+    Column {
+        Text(
+            title,
+            style = MaterialTheme.typography.titleSmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            modifier = Modifier.padding(start = 8.dp, bottom = 8.dp),
+        )
+        AppCard(padding = PaddingValues(vertical = 6.dp), content = content)
     }
 }
 
 @Composable
-private fun SwitchRow(title: String, subtitle: String, checked: Boolean, onChange: (Boolean) -> Unit) {
+private fun RowIcon(@DrawableRes icon: Int) {
+    Box(
+        Modifier.size(38.dp).clip(RoundedCornerShape(12.dp)).background(MaterialTheme.colorScheme.surfaceContainerHighest),
+        contentAlignment = Alignment.Center,
+    ) {
+        AppIcon(icon, null, Modifier.size(20.dp), tint = MaterialTheme.colorScheme.onSurface)
+    }
+}
+
+@Composable
+fun SettingRow(@DrawableRes icon: Int?, title: String, value: String? = null, onClick: () -> Unit) {
+    Row(
+        Modifier
+            .fillMaxWidth()
+            .clickable(onClick = onClick)
+            .heightIn(min = 64.dp)
+            .padding(horizontal = 16.dp, vertical = 10.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        if (icon != null) {
+            RowIcon(icon)
+            Spacer(Modifier.width(14.dp))
+        }
+        Column(Modifier.weight(1f)) {
+            Text(title, style = MaterialTheme.typography.bodyLarge.copy(fontWeight = FontWeight.SemiBold))
+            if (value != null) {
+                Text(value, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
+        }
+        AppIcon(R.drawable.ic_chevron_right, null, Modifier.size(20.dp), tint = MaterialTheme.colorScheme.outline)
+    }
+}
+
+@Composable
+private fun SwitchRow(@DrawableRes icon: Int, title: String, subtitle: String, checked: Boolean, onChange: (Boolean) -> Unit) {
     Row(
         Modifier
             .fillMaxWidth()
             .clickable { onChange(!checked) }
             .heightIn(min = 64.dp)
-            .padding(horizontal = 24.dp, vertical = 12.dp),
+            .padding(horizontal = 16.dp, vertical = 10.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
+        RowIcon(icon)
+        Spacer(Modifier.width(14.dp))
         Column(Modifier.weight(1f)) {
-            Text(title, style = MaterialTheme.typography.bodyLarge)
+            Text(title, style = MaterialTheme.typography.bodyLarge.copy(fontWeight = FontWeight.SemiBold))
             Text(subtitle, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
         }
-        Spacer(Modifier.width(16.dp))
+        Spacer(Modifier.width(12.dp))
         Switch(checked = checked, onCheckedChange = onChange)
     }
 }

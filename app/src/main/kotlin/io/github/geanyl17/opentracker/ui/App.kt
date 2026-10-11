@@ -1,18 +1,37 @@
 package io.github.geanyl17.opentracker.ui
 
 import androidx.activity.compose.BackHandler
+import androidx.annotation.DrawableRes
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.EnterTransition
 import androidx.compose.animation.ExitTransition
+import androidx.compose.animation.core.Spring
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.spring
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.togetherWith
-import androidx.compose.material3.NavigationBar
-import androidx.compose.material3.NavigationBarItem
+import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxHeight
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.navigationBarsPadding
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.SnackbarDuration
 import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.SnackbarResult
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
@@ -23,6 +42,11 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import io.github.geanyl17.opentracker.AppContainer
@@ -42,6 +66,7 @@ import io.github.geanyl17.opentracker.ui.report.ReportViewModel
 import io.github.geanyl17.opentracker.ui.settings.CategoriesScreen
 import io.github.geanyl17.opentracker.ui.settings.SettingsScreen
 import io.github.geanyl17.opentracker.ui.settings.SettingsViewModel
+import io.github.geanyl17.opentracker.ui.theme.AppTheme
 import io.github.geanyl17.opentracker.ui.theme.OpenTrackerTheme
 import io.github.geanyl17.opentracker.ui.transactions.TransactionsScreen
 import io.github.geanyl17.opentracker.ui.transactions.TransactionsViewModel
@@ -104,20 +129,7 @@ private fun Navigation(container: AppContainer, launchAction: String?, onLaunchH
     BackHandler(enabled = stack.size > 1, onBack = ::back)
 
     val tabBar: @Composable () -> Unit = {
-        NavigationBar {
-            listOf(
-                Triple(Screen.Home, "Home", R.drawable.ic_home),
-                Triple(Screen.Transactions, "Transactions", R.drawable.ic_receipt_long),
-                Triple(Screen.Assistant, "Assistant", R.drawable.ic_forum),
-            ).forEach { (tab, label, icon) ->
-                NavigationBarItem(
-                    selected = stack.last() == tab,
-                    onClick = { selectTab(tab) },
-                    icon = { AppIcon(icon, null) },
-                    label = { Text(label) },
-                )
-            }
-        }
+        TabBar(current = stack.last(), onSelect = ::selectTab, onAdd = { open(Screen.Editor()) })
     }
 
     AnimatedContent(
@@ -135,7 +147,6 @@ private fun Navigation(container: AppContainer, launchAction: String?, onLaunchH
             Screen.Home -> HomeScreen(
                 viewModel = viewModel { HomeViewModel(container.ledger, container.settings) },
                 tabBar = tabBar,
-                onAdd = { open(Screen.Editor()) },
                 onOpenEntry = { open(Screen.Editor(it)) },
                 onSeeAll = { selectTab(Screen.Transactions) },
                 onVoice = {
@@ -143,11 +154,11 @@ private fun Navigation(container: AppContainer, launchAction: String?, onLaunchH
                     listenOnOpen = true
                 },
                 onSettings = { open(Screen.Settings) },
+                onOpenCategories = { open(Screen.Categories) },
             )
             Screen.Transactions -> TransactionsScreen(
                 viewModel = viewModel { TransactionsViewModel(container.ledger) },
                 tabBar = tabBar,
-                onAdd = { open(Screen.Editor()) },
                 onOpenEntry = { open(Screen.Editor(it)) },
             )
             Screen.Assistant -> AssistantScreen(
@@ -187,3 +198,75 @@ private fun Navigation(container: AppContainer, launchAction: String?, onLaunchH
         }
     }
 }
+
+private class Tab(val screen: Screen, val label: String, @param:DrawableRes val icon: Int, @param:DrawableRes val selectedIcon: Int)
+
+private val tabItems = listOf(
+    Tab(Screen.Home, "Home", R.drawable.ic_home, R.drawable.ic_home_fill),
+    Tab(Screen.Transactions, "Activity", R.drawable.ic_receipt_long, R.drawable.ic_receipt_long_fill),
+    Tab(Screen.Assistant, "Assistant", R.drawable.ic_graphic_eq, R.drawable.ic_graphic_eq_fill),
+)
+
+/** A floating pill with the tabs, where the selected one shows its name, and a round button to add a transaction. */
+@Composable
+private fun TabBar(current: Screen, onSelect: (Screen) -> Unit, onAdd: () -> Unit) {
+    val colors = MaterialTheme.colorScheme
+    Row(
+        Modifier
+            .fillMaxWidth()
+            .navigationBarsPadding()
+            .padding(start = 16.dp, end = 16.dp, top = 8.dp, bottom = 12.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Surface(
+            shape = CircleShape,
+            color = AppTheme.colors.card,
+            shadowElevation = 6.dp,
+            border = if (AppTheme.colors.dark) BorderStroke(1.dp, colors.outlineVariant) else null,
+            modifier = Modifier
+                .weight(1f)
+                .height(64.dp),
+        ) {
+            Row(Modifier.padding(6.dp), horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                tabItems.forEach { tab ->
+                    val selected = current == tab.screen
+                    val weight by animateFloatAsState(if (selected) 1.9f else 1f, spring(stiffness = Spring.StiffnessMediumLow), label = "tab")
+                    Row(
+                        Modifier
+                            .weight(weight)
+                            .fillMaxHeight()
+                            .clip(CircleShape)
+                            .background(if (selected) colors.primary else Color.Transparent)
+                            .clickable { onSelect(tab.screen) },
+                        horizontalArrangement = Arrangement.Center,
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        AppIcon(
+                            if (selected) tab.selectedIcon else tab.icon,
+                            tab.label,
+                            Modifier.size(22.dp),
+                            tint = if (selected) colors.onPrimary else colors.onSurfaceVariant,
+                        )
+                        if (selected) {
+                            Spacer(Modifier.width(8.dp))
+                            Text(tab.label, style = MaterialTheme.typography.labelLarge, color = colors.onPrimary, maxLines = 1)
+                        }
+                    }
+                }
+            }
+        }
+        Spacer(Modifier.width(12.dp))
+        Surface(
+            onClick = onAdd,
+            shape = CircleShape,
+            color = colors.primary,
+            shadowElevation = 6.dp,
+            modifier = Modifier.size(64.dp),
+        ) {
+            Box(contentAlignment = Alignment.Center) {
+                AppIcon(R.drawable.ic_add, "Add a transaction", Modifier.size(28.dp), tint = colors.onPrimary)
+            }
+        }
+    }
+}
+

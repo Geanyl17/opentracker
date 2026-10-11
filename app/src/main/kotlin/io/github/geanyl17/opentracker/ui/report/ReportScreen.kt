@@ -1,31 +1,33 @@
 package io.github.geanyl17.opentracker.ui.report
 
 import android.content.ClipData
+import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Button
+import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.CircularProgressIndicator
-import androidx.compose.material3.ExperimentalMaterial3Api
-import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.IconButton
-import androidx.compose.material3.ListItem
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.SnackbarHost
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
-import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -37,17 +39,22 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.platform.ClipEntry
 import androidx.compose.ui.platform.LocalClipboard
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import io.github.geanyl17.opentracker.R
-import io.github.geanyl17.opentracker.data.Report
+import io.github.geanyl17.opentracker.ui.components.AppCard
 import io.github.geanyl17.opentracker.ui.components.AppIcon
+import io.github.geanyl17.opentracker.ui.components.CircleIconButton
 import io.github.geanyl17.opentracker.ui.components.LocalSnackbar
 import io.github.geanyl17.opentracker.ui.components.Markdown
-import io.github.geanyl17.opentracker.ui.components.SectionHeader
+import io.github.geanyl17.opentracker.ui.components.SectionTitle
+import io.github.geanyl17.opentracker.ui.components.TopBar
+import io.github.geanyl17.opentracker.ui.theme.AppTheme
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import java.time.Instant
@@ -55,7 +62,6 @@ import java.time.ZoneId
 import java.time.format.DateTimeFormatter
 import java.time.format.FormatStyle
 
-@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun ReportScreen(viewModel: ReportViewModel, onBack: () -> Unit, onOpenSettings: () -> Unit) {
     val state by viewModel.state.collectAsStateWithLifecycle()
@@ -72,22 +78,22 @@ fun ReportScreen(viewModel: ReportViewModel, onBack: () -> Unit, onOpenSettings:
 
     Scaffold(
         topBar = {
-            TopAppBar(
-                title = { Text("Deep analysis") },
-                navigationIcon = { IconButton(onClick = onBack) { AppIcon(R.drawable.ic_arrow_back, "Back") } },
+            TopBar(
+                "Deep analysis",
+                onBack,
                 actions = {
                     if (report != null) {
-                        IconButton(
+                        CircleIconButton(
+                            R.drawable.ic_content_copy,
+                            "Copy report",
                             onClick = {
                                 scope.launch {
                                     clipboard.setClipEntry(ClipEntry(ClipData.newPlainText("OpenTracker report", report.text)))
                                     snackbar.showSnackbar("Report copied")
                                 }
                             },
-                        ) {
-                            AppIcon(R.drawable.ic_content_copy, "Copy report")
-                        }
-                        IconButton(onClick = { viewModel.delete(report) }) { AppIcon(R.drawable.ic_delete, "Delete report") }
+                        )
+                        CircleIconButton(R.drawable.ic_delete, "Delete report", onClick = { viewModel.delete(report) })
                     }
                 },
             )
@@ -96,7 +102,8 @@ fun ReportScreen(viewModel: ReportViewModel, onBack: () -> Unit, onOpenSettings:
     ) { padding ->
         LazyColumn(
             state = listState,
-            contentPadding = PaddingValues(top = padding.calculateTopPadding(), bottom = padding.calculateBottomPadding() + 24.dp),
+            contentPadding = PaddingValues(start = 16.dp, end = 16.dp, top = padding.calculateTopPadding() + 4.dp, bottom = padding.calculateBottomPadding() + 24.dp),
+            verticalArrangement = Arrangement.spacedBy(16.dp),
         ) {
             item {
                 RunPanel(
@@ -109,37 +116,46 @@ fun ReportScreen(viewModel: ReportViewModel, onBack: () -> Unit, onOpenSettings:
                 )
             }
             if (report != null) {
-                item { HorizontalDivider(Modifier.padding(vertical = 8.dp)) }
                 item {
-                    Text(
-                        "Report from ${formatDate(report.createdAt)}",
-                        style = MaterialTheme.typography.labelLarge,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        modifier = Modifier.padding(horizontal = 24.dp, vertical = 8.dp),
-                    )
+                    AppCard(padding = PaddingValues(start = 20.dp, end = 20.dp, top = 18.dp, bottom = 20.dp)) {
+                        Text(
+                            "Report from ${formatDate(report.createdAt)}",
+                            style = MaterialTheme.typography.labelLarge,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                        Spacer(Modifier.height(4.dp))
+                        Markdown(report.text)
+                    }
                 }
-                item { Markdown(report.text, Modifier.padding(horizontal = 24.dp)) }
             }
             val earlier = reports.filter { it.id != report?.id }
             if (earlier.isNotEmpty()) {
-                item { SectionHeader("Other reports") }
-                items(earlier, key = Report::id) { other ->
-                    ListItem(
-                        headlineContent = { Text(formatDate(other.createdAt)) },
-                        supportingContent = {
-                            Text(
-                                other.text.lineSequence().firstOrNull { it.isNotBlank() }?.trimStart('#', ' ').orEmpty(),
-                                maxLines = 1,
-                                overflow = TextOverflow.Ellipsis,
-                            )
-                        },
-                        trailingContent = {
-                            IconButton(onClick = { viewModel.delete(other) }) { AppIcon(R.drawable.ic_delete, "Delete report") }
-                        },
-                        modifier = Modifier
-                            .clickable { selectedId = other.id }
-                            .padding(horizontal = 8.dp),
-                    )
+                item {
+                    AppCard(padding = PaddingValues(start = 8.dp, end = 8.dp, top = 16.dp, bottom = 8.dp)) {
+                        SectionTitle("Other reports", Modifier.padding(horizontal = 12.dp))
+                        earlier.forEach { other ->
+                            Row(
+                                Modifier
+                                    .fillMaxWidth()
+                                    .clip(RoundedCornerShape(16.dp))
+                                    .clickable { selectedId = other.id }
+                                    .padding(start = 12.dp, top = 6.dp, bottom = 6.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                            ) {
+                                Column(Modifier.weight(1f)) {
+                                    Text(formatDate(other.createdAt), style = MaterialTheme.typography.bodyLarge.copy(fontWeight = FontWeight.SemiBold))
+                                    Text(
+                                        other.text.lineSequence().firstOrNull { it.isNotBlank() }?.trimStart('#', ' ').orEmpty(),
+                                        style = MaterialTheme.typography.bodyMedium,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis,
+                                    )
+                                }
+                                IconButton(onClick = { viewModel.delete(other) }) { AppIcon(R.drawable.ic_delete, "Delete report") }
+                            }
+                        }
+                    }
                 }
             }
         }
@@ -155,26 +171,39 @@ private fun RunPanel(
     onCancel: () -> Unit,
     onOpenSettings: () -> Unit,
 ) {
-    Column(Modifier.padding(horizontal = 24.dp, vertical = 8.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-        Text(
-            "Antigravity on your PC studies a year of your transactions and writes a report: trends, recurring payments, " +
-                "unusual spending and ways to save. It uses your own Antigravity sign-in.",
-            style = MaterialTheme.typography.bodyMedium,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-        )
-        when {
-            !paired -> Button(onClick = onOpenSettings) { Text("Pair with your PC") }
-            state is AnalysisState.Running -> Running(state, onCancel)
-            state is AnalysisState.Starting -> Row(verticalAlignment = Alignment.CenterVertically) {
-                CircularProgressIndicator(Modifier.size(18.dp), strokeWidth = 2.dp)
-                Spacer(Modifier.width(12.dp))
-                Text("Starting…", style = MaterialTheme.typography.bodyLarge)
-            }
-            else -> {
-                if (state is AnalysisState.Failed) {
-                    Text(state.message, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.error)
+    val app = AppTheme.colors
+    Surface(shape = RoundedCornerShape(28.dp), color = app.hero, modifier = Modifier.fillMaxWidth()) {
+        Column(Modifier.padding(22.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Box(Modifier.size(44.dp).clip(CircleShape).background(app.heroTrack), contentAlignment = Alignment.Center) {
+                    AppIcon(R.drawable.ic_query_stats, null, Modifier.size(22.dp), tint = app.accent)
                 }
-                Button(onClick = onRun) { Text(if (hasReport) "Run a new analysis" else "Run analysis") }
+                Spacer(Modifier.width(14.dp))
+                Text("A year of your spending, studied", style = MaterialTheme.typography.titleMedium, color = app.onHero)
+            }
+            Text(
+                "Antigravity on your PC writes a report: trends, recurring payments, unusual spending and ways to save. " +
+                    "It uses your own Antigravity sign-in.",
+                style = MaterialTheme.typography.bodyMedium,
+                color = app.onHeroMuted,
+            )
+            val buttonColors = ButtonDefaults.buttonColors(containerColor = app.onHero, contentColor = app.hero)
+            when {
+                !paired -> Button(onClick = onOpenSettings, colors = buttonColors, modifier = Modifier.height(52.dp)) { Text("Pair with your PC") }
+                state is AnalysisState.Running -> Running(state, onCancel)
+                state is AnalysisState.Starting -> Row(verticalAlignment = Alignment.CenterVertically) {
+                    CircularProgressIndicator(Modifier.size(18.dp), color = app.accent, strokeWidth = 2.dp)
+                    Spacer(Modifier.width(12.dp))
+                    Text("Starting…", style = MaterialTheme.typography.bodyLarge, color = app.onHero)
+                }
+                else -> {
+                    if (state is AnalysisState.Failed) {
+                        Text(state.message, style = MaterialTheme.typography.bodyMedium, color = app.negative)
+                    }
+                    Button(onClick = onRun, colors = buttonColors, modifier = Modifier.height(52.dp)) {
+                        Text(if (hasReport) "Run a new analysis" else "Run analysis")
+                    }
+                }
             }
         }
     }
@@ -182,6 +211,7 @@ private fun RunPanel(
 
 @Composable
 private fun Running(state: AnalysisState.Running, onCancel: () -> Unit) {
+    val app = AppTheme.colors
     var now by remember { mutableLongStateOf(System.currentTimeMillis()) }
     LaunchedEffect(state.since) {
         while (true) {
@@ -192,14 +222,15 @@ private fun Running(state: AnalysisState.Running, onCancel: () -> Unit) {
     val seconds = ((now - state.since) / 1000).coerceAtLeast(0)
     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
         Row(verticalAlignment = Alignment.CenterVertically) {
-            CircularProgressIndicator(Modifier.size(18.dp), strokeWidth = 2.dp)
+            CircularProgressIndicator(Modifier.size(18.dp), color = app.accent, strokeWidth = 2.dp)
             Spacer(Modifier.width(12.dp))
             Text(
                 "Analyzing… %d:%02d".format(seconds / 60, seconds % 60),
                 style = MaterialTheme.typography.bodyLarge,
+                color = app.onHero,
                 modifier = Modifier.weight(1f),
             )
-            OutlinedButton(onClick = onCancel) { Text("Cancel") }
+            OutlinedButton(onClick = onCancel, colors = ButtonDefaults.outlinedButtonColors(contentColor = app.onHero)) { Text("Cancel") }
         }
         Text(
             if (state.retrying) {
@@ -208,7 +239,7 @@ private fun Running(state: AnalysisState.Running, onCancel: () -> Unit) {
                 "This usually takes a minute or two. You can leave this screen; the analysis keeps running on your PC."
             },
             style = MaterialTheme.typography.bodySmall,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            color = app.onHeroMuted,
         )
     }
 }
