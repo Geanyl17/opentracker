@@ -1,0 +1,25 @@
+# Gradle and Kotlin
+.gradle/
+.kotlin/
+build/
+local.properties
+
+# IDEs
+.idea/
+.fleet/
+.vscode/
+*.iml
+
+# Android
+captures/
+*.apk
+*.aab
+
+# Signing keys must never be committed
+*.jks
+*.keystore
+keystore.properties
+
+# OS files
+.DS_Store
+Thumbs.db
