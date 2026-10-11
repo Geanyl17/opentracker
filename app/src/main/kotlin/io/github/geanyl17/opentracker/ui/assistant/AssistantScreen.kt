@@ -5,17 +5,33 @@ import android.content.pm.PackageManager
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.annotation.DrawableRes
+import androidx.compose.animation.AnimatedContent
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.SizeTransform
+import androidx.compose.animation.animateColorAsState
+import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.RepeatMode
+import androidx.compose.animation.core.StartOffset
 import androidx.compose.animation.core.animateFloat
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.infiniteRepeatable
+import androidx.compose.animation.core.keyframes
 import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.tween
+import androidx.compose.animation.expandHorizontally
+import androidx.compose.animation.expandVertically
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.scaleIn
+import androidx.compose.animation.scaleOut
+import androidx.compose.animation.shrinkHorizontally
+import androidx.compose.animation.shrinkVertically
+import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.background
+import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.foundation.layout.IntrinsicSize
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
@@ -26,12 +42,13 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
-import androidx.compose.foundation.layout.imePadding
-import androidx.compose.foundation.layout.isImeVisible
+import androidx.compose.foundation.layout.ime
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
+import androidx.compose.foundation.layout.union
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
@@ -56,6 +73,7 @@ import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
@@ -64,7 +82,10 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardCapitalization
@@ -83,14 +104,23 @@ import io.github.geanyl17.opentracker.ui.components.AppCard
 import io.github.geanyl17.opentracker.ui.components.AppIcon
 import io.github.geanyl17.opentracker.ui.components.CategoryIcon
 import io.github.geanyl17.opentracker.ui.components.CircleIconButton
+import io.github.geanyl17.opentracker.ui.components.EmphasizedDecelerate
 import io.github.geanyl17.opentracker.ui.components.LocalMoney
 import io.github.geanyl17.opentracker.ui.components.LocalSnackbar
 import io.github.geanyl17.opentracker.ui.components.ScreenTitle
+import io.github.geanyl17.opentracker.ui.components.TabBarInsets
 import io.github.geanyl17.opentracker.ui.components.dayLabel
+import io.github.geanyl17.opentracker.ui.components.pressScale
+import io.github.geanyl17.opentracker.ui.components.rememberEntrance
+import io.github.geanyl17.opentracker.ui.components.reveal
 import io.github.geanyl17.opentracker.ui.theme.AppTheme
 import io.github.geanyl17.opentracker.voice.VoiceState
 import kotlinx.coroutines.launch
 import java.time.LocalDate
+
+private enum class Mode { Connect, Intro, Chat }
+
+private enum class ComposerButton { Mic, Send, Stop }
 
 private class Suggestion(val text: String, @param:DrawableRes val icon: Int)
 
@@ -101,11 +131,9 @@ private val suggestions = listOf(
     Suggestion("Compare with last month", R.drawable.ic_calendar_today),
 )
 
-@OptIn(ExperimentalLayoutApi::class)
 @Composable
 fun AssistantScreen(
     viewModel: AssistantViewModel,
-    tabBar: @Composable () -> Unit,
     listenNow: Boolean,
     onListenHandled: () -> Unit,
     onOpenReport: () -> Unit,
@@ -186,8 +214,13 @@ fun AssistantScreen(
             )
         },
         bottomBar = {
-            Column(Modifier.imePadding()) {
-                if (connected && chatting) {
+            // Rests on the tab bar, or on the keyboard while it's open.
+            Column(Modifier.windowInsetsPadding(WindowInsets.ime.union(TabBarInsets))) {
+                AnimatedVisibility(
+                    visible = connected && chatting,
+                    enter = fadeIn(tween(200, delayMillis = 100)) + expandVertically(tween(350, easing = EmphasizedDecelerate)),
+                    exit = fadeOut(tween(120)) + shrinkVertically(tween(250, easing = EmphasizedDecelerate)),
+                ) {
                     Composer(
                         text = input,
                         onTextChange = { input = it },
@@ -198,36 +231,47 @@ fun AssistantScreen(
                         onStop = viewModel::stopListening,
                     )
                 }
-                if (!WindowInsets.isImeVisible) tabBar()
             }
         },
         snackbarHost = { SnackbarHost(LocalSnackbar.current) },
     ) { padding ->
-        when {
-            !connected -> ConnectPrompt(padding, onOpenSettings)
-            !chatting -> Intro(
-                padding = padding,
-                pendingAnalysis = settings.pendingAnalysis != null,
-                input = input,
-                onInputChange = { input = it },
-                onSend = { send(input) },
-                onMic = ::listen,
-                onSuggestion = ::send,
-                onOpenReport = onOpenReport,
-            )
-            // Laid out from the bottom up, so the newest message stays in view when the keyboard or tab bar moves.
-            else -> LazyColumn(
-                state = listState,
-                reverseLayout = true,
-                contentPadding = PaddingValues(top = padding.calculateTopPadding() + 8.dp, bottom = padding.calculateBottomPadding() + 12.dp),
-                modifier = Modifier.fillMaxSize(),
-            ) {
-                if (busy) item(key = "thinking") { Thinking() }
-                items(messages.asReversed(), key = { it.id }) { message ->
-                    when (message) {
-                        is ChatMessage.User -> UserBubble(message.text)
-                        is ChatMessage.Reply -> ReplyBlock(message, onUndo = { viewModel.undo(message, it) })
-                        is ChatMessage.Failure -> FailureBlock(message, onRetry = { viewModel.retry(message) })
+        AnimatedContent(
+            targetState = when {
+                !connected -> Mode.Connect
+                !chatting -> Mode.Intro
+                else -> Mode.Chat
+            },
+            transitionSpec = { fadeIn(tween(220, delayMillis = 90)) togetherWith fadeOut(tween(90)) },
+            label = "assistant",
+        ) { mode ->
+            when (mode) {
+                Mode.Connect -> ConnectPrompt(padding, onOpenSettings)
+                Mode.Intro -> Intro(
+                    padding = padding,
+                    pendingAnalysis = settings.pendingAnalysis != null,
+                    input = input,
+                    onInputChange = { input = it },
+                    onSend = { send(input) },
+                    onMic = ::listen,
+                    onSuggestion = ::send,
+                    onOpenReport = onOpenReport,
+                )
+                // Laid out from the bottom up, so the newest message stays in view when the keyboard or tab bar moves.
+                Mode.Chat -> LazyColumn(
+                    state = listState,
+                    reverseLayout = true,
+                    contentPadding = PaddingValues(top = padding.calculateTopPadding() + 8.dp, bottom = padding.calculateBottomPadding() + 12.dp),
+                    modifier = Modifier.fillMaxSize(),
+                ) {
+                    if (busy) item(key = "thinking") { Thinking(Modifier.animateItem(fadeOutSpec = null)) }
+                    items(messages.asReversed(), key = { it.id }) { message ->
+                        Box(Modifier.animateItem()) {
+                            when (message) {
+                                is ChatMessage.User -> UserBubble(message.text)
+                                is ChatMessage.Reply -> ReplyBlock(message, onUndo = { viewModel.undo(message, it) })
+                                is ChatMessage.Failure -> FailureBlock(message, onRetry = { viewModel.retry(message) })
+                            }
+                        }
                     }
                 }
             }
@@ -261,15 +305,22 @@ private fun Composer(
                 .weight(1f)
                 .heightIn(min = 56.dp),
         ) {
-            Box(Modifier.padding(horizontal = 20.dp, vertical = 16.dp), contentAlignment = Alignment.CenterStart) {
-                if (listening != null) {
+            AnimatedContent(
+                targetState = listening,
+                contentKey = { it != null },
+                transitionSpec = { fadeIn(tween(200, delayMillis = 60)) togetherWith fadeOut(tween(100)) using SizeTransform(clip = false) },
+                contentAlignment = Alignment.CenterStart,
+                label = "field",
+                modifier = Modifier.padding(horizontal = 20.dp, vertical = 16.dp),
+            ) { shown ->
+                if (shown != null) {
                     Row(verticalAlignment = Alignment.CenterVertically) {
-                        Waveform(listening.level)
+                        Waveform(shown.level)
                         Spacer(Modifier.width(12.dp))
                         Text(
-                            listening.partial.ifEmpty { "Listening…" },
+                            shown.partial.ifEmpty { "Listening…" },
                             style = MaterialTheme.typography.bodyLarge,
-                            color = if (listening.partial.isEmpty()) colors.onSurfaceVariant else colors.onSurface,
+                            color = if (shown.partial.isEmpty()) colors.onSurfaceVariant else colors.onSurface,
                         )
                     }
                 } else {
@@ -278,10 +329,23 @@ private fun Composer(
             }
         }
         Spacer(Modifier.width(10.dp))
-        when {
-            listening != null -> RoundButton(R.drawable.ic_stop, "Stop listening", onStop, AppTheme.colors.accent, AppTheme.colors.onAccent)
-            text.isNotBlank() -> RoundButton(R.drawable.ic_arrow_upward, "Send", onSend, colors.primary, colors.onPrimary, enabled = !busy)
-            else -> RoundButton(R.drawable.ic_mic_fill, "Speak", onMic, AppTheme.colors.accent, AppTheme.colors.onAccent, enabled = !busy)
+        AnimatedContent(
+            targetState = when {
+                listening != null -> ComposerButton.Stop
+                text.isNotBlank() -> ComposerButton.Send
+                else -> ComposerButton.Mic
+            },
+            transitionSpec = {
+                (fadeIn(tween(150)) + scaleIn(tween(250, easing = EmphasizedDecelerate), initialScale = 0.6f)) togetherWith
+                    (fadeOut(tween(100)) + scaleOut(tween(150), targetScale = 0.6f))
+            },
+            label = "button",
+        ) { button ->
+            when (button) {
+                ComposerButton.Stop -> RoundButton(R.drawable.ic_stop, "Stop listening", onStop, AppTheme.colors.accent, AppTheme.colors.onAccent)
+                ComposerButton.Send -> RoundButton(R.drawable.ic_arrow_upward, "Send", onSend, colors.primary, colors.onPrimary, enabled = !busy)
+                ComposerButton.Mic -> RoundButton(R.drawable.ic_mic_fill, "Speak", onMic, AppTheme.colors.accent, AppTheme.colors.onAccent, enabled = !busy)
+            }
         }
     }
 }
@@ -321,16 +385,20 @@ private fun RoundButton(
     onClick: () -> Unit,
     container: Color,
     content: Color,
+    modifier: Modifier = Modifier,
     enabled: Boolean = true,
     size: Dp = 56.dp,
 ) {
+    val color by animateColorAsState(if (enabled) container else container.copy(alpha = 0.4f), tween(200), label = "button")
+    val interaction = remember { MutableInteractionSource() }
     Surface(
         onClick = onClick,
         enabled = enabled,
         shape = CircleShape,
-        color = if (enabled) container else container.copy(alpha = 0.4f),
+        color = color,
         shadowElevation = 2.dp,
-        modifier = Modifier.size(size),
+        interactionSource = interaction,
+        modifier = modifier.size(size).pressScale(interaction, pressed = 0.9f),
     ) {
         Box(contentAlignment = Alignment.Center) {
             AppIcon(icon, description, Modifier.size(size * 0.42f), tint = content)
@@ -409,18 +477,25 @@ private fun ReplyBlock(reply: ChatMessage.Reply, onUndo: (Int) -> Unit) {
                             color = if (item.undone) MaterialTheme.colorScheme.onSurfaceVariant else MaterialTheme.colorScheme.onSurface,
                             modifier = Modifier.weight(1f),
                         )
-                        if (item.undone) {
-                            Text(
-                                "Undone",
-                                style = MaterialTheme.typography.labelLarge,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                modifier = Modifier.padding(horizontal = 12.dp),
-                            )
-                        } else {
-                            TextButton(onClick = { onUndo(index) }) {
-                                AppIcon(R.drawable.ic_undo, null, Modifier.size(18.dp))
-                                Spacer(Modifier.width(6.dp))
-                                Text("Undo")
+                        AnimatedContent(
+                            targetState = item.undone,
+                            transitionSpec = { fadeIn(tween(200, delayMillis = 60)) togetherWith fadeOut(tween(100)) using SizeTransform(clip = false) },
+                            contentAlignment = Alignment.CenterEnd,
+                            label = "undo",
+                        ) { undone ->
+                            if (undone) {
+                                Text(
+                                    "Undone",
+                                    style = MaterialTheme.typography.labelLarge,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    modifier = Modifier.padding(horizontal = 12.dp),
+                                )
+                            } else {
+                                TextButton(onClick = { onUndo(index) }) {
+                                    AppIcon(R.drawable.ic_undo, null, Modifier.size(18.dp))
+                                    Spacer(Modifier.width(6.dp))
+                                    Text("Undo")
+                                }
                             }
                         }
                     }
@@ -443,22 +518,46 @@ private fun FailureBlock(failure: ChatMessage.Failure, onRetry: () -> Unit) {
     }
 }
 
+/** Three dots that rise and fall in turn while the reply is on its way. */
 @Composable
-private fun Thinking() {
-    val alpha by rememberInfiniteTransition(label = "thinking").animateFloat(
-        initialValue = 0.35f,
-        targetValue = 1f,
-        animationSpec = infiniteRepeatable(tween(600), RepeatMode.Reverse),
-        label = "alpha",
-    )
-    Row(Modifier.padding(horizontal = 16.dp, vertical = 10.dp), verticalAlignment = Alignment.CenterVertically) {
+private fun Thinking(modifier: Modifier = Modifier) {
+    val transition = rememberInfiniteTransition(label = "thinking")
+    val color = MaterialTheme.colorScheme.onSurfaceVariant
+    Row(
+        modifier
+            .padding(horizontal = 16.dp, vertical = 10.dp)
+            .semantics(mergeDescendants = true) { contentDescription = "Thinking" },
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
         AssistantMark()
-        Spacer(Modifier.width(12.dp))
-        Text(
-            "Thinking…",
-            style = MaterialTheme.typography.bodyMedium,
-            color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = alpha),
-        )
+        Spacer(Modifier.width(14.dp))
+        repeat(3) { index ->
+            val phase by transition.animateFloat(
+                initialValue = 0f,
+                targetValue = 0f,
+                animationSpec = infiniteRepeatable(
+                    keyframes {
+                        durationMillis = 1200
+                        0f at 0
+                        1f at 300 using FastOutSlowInEasing
+                        0f at 600 using FastOutSlowInEasing
+                    },
+                    initialStartOffset = StartOffset(index * 160),
+                ),
+                label = "dot",
+            )
+            Box(
+                Modifier
+                    .padding(end = 5.dp)
+                    .size(8.dp)
+                    .graphicsLayer {
+                        translationY = -phase * 5.dp.toPx()
+                        alpha = 0.35f + 0.65f * phase
+                    }
+                    .clip(CircleShape)
+                    .background(color),
+            )
+        }
     }
 }
 
@@ -473,6 +572,13 @@ private fun Intro(
     onSuggestion: (String) -> Unit,
     onOpenReport: () -> Unit,
 ) {
+    val entrance = rememberEntrance()
+    val breath by rememberInfiniteTransition(label = "breath").animateFloat(
+        initialValue = 1f,
+        targetValue = 1.035f,
+        animationSpec = infiniteRepeatable(tween(1800, easing = FastOutSlowInEasing), RepeatMode.Reverse),
+        label = "breath",
+    )
     Column(
         Modifier
             .fillMaxSize()
@@ -482,26 +588,48 @@ private fun Intro(
         horizontalAlignment = Alignment.CenterHorizontally,
     ) {
         Spacer(Modifier.height(20.dp))
-        RoundButton(R.drawable.ic_mic_fill, "Speak", onMic, AppTheme.colors.accent, AppTheme.colors.onAccent, size = 104.dp)
+        RoundButton(
+            R.drawable.ic_mic_fill,
+            "Speak",
+            onMic,
+            AppTheme.colors.accent,
+            AppTheme.colors.onAccent,
+            size = 104.dp,
+            modifier = Modifier
+                .reveal({ entrance.value }, 0)
+                .graphicsLayer {
+                    scaleX = breath
+                    scaleY = breath
+                },
+        )
         Spacer(Modifier.height(18.dp))
-        Text("Tap and talk", style = MaterialTheme.typography.headlineSmall)
+        Text("Tap and talk", style = MaterialTheme.typography.headlineSmall, modifier = Modifier.reveal({ entrance.value }, 1))
         Spacer(Modifier.height(6.dp))
         Text(
             "Say “Spent 250 on lunch” and it's recorded, or ask how your month is going.",
             style = MaterialTheme.typography.bodyMedium,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
             textAlign = TextAlign.Center,
-            modifier = Modifier.padding(horizontal = 24.dp),
+            modifier = Modifier.reveal({ entrance.value }, 2).padding(horizontal = 24.dp),
         )
         Spacer(Modifier.height(24.dp))
-        suggestions.chunked(2).forEach { row ->
-            Row(Modifier.fillMaxWidth().height(IntrinsicSize.Min).padding(bottom = 10.dp), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+        suggestions.chunked(2).forEachIndexed { rowIndex, row ->
+            Row(
+                Modifier
+                    .reveal({ entrance.value }, 3 + rowIndex)
+                    .fillMaxWidth()
+                    .height(IntrinsicSize.Min)
+                    .padding(bottom = 10.dp),
+                horizontalArrangement = Arrangement.spacedBy(10.dp),
+            ) {
                 row.forEach { suggestion ->
+                    val interaction = remember { MutableInteractionSource() }
                     Surface(
                         onClick = { onSuggestion(suggestion.text) },
                         shape = RoundedCornerShape(20.dp),
                         color = AppTheme.colors.card,
-                        modifier = Modifier.weight(1f).fillMaxHeight(),
+                        interactionSource = interaction,
+                        modifier = Modifier.weight(1f).fillMaxHeight().pressScale(interaction, pressed = 0.96f),
                     ) {
                         Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
                             AppIcon(suggestion.icon, null, Modifier.size(22.dp), tint = MaterialTheme.colorScheme.onSurfaceVariant)
@@ -511,18 +639,28 @@ private fun Intro(
                 }
             }
         }
-        AppCard(padding = PaddingValues(start = 20.dp, end = 6.dp, top = 6.dp, bottom = 6.dp)) {
-            Row(verticalAlignment = Alignment.CenterVertically) {
+        AppCard(Modifier.reveal({ entrance.value }, 5), padding = PaddingValues(start = 20.dp, end = 6.dp, top = 6.dp, bottom = 6.dp)) {
+            Row(Modifier.heightIn(min = 44.dp), verticalAlignment = Alignment.CenterVertically) {
                 MessageField(input, onInputChange, busy = false, onSend, "Or type a question", singleLine = true, modifier = Modifier.weight(1f))
-                if (input.isNotBlank()) {
+                AnimatedVisibility(
+                    visible = input.isNotBlank(),
+                    enter = fadeIn(tween(150)) + expandHorizontally(tween(250, easing = EmphasizedDecelerate)) +
+                        scaleIn(tween(250, easing = EmphasizedDecelerate), initialScale = 0.6f),
+                    exit = fadeOut(tween(100)) + shrinkHorizontally(tween(200, easing = EmphasizedDecelerate)) + scaleOut(tween(150), targetScale = 0.6f),
+                ) {
                     RoundButton(R.drawable.ic_arrow_upward, "Send", onSend, MaterialTheme.colorScheme.primary, MaterialTheme.colorScheme.onPrimary, size = 44.dp)
-                } else {
-                    Spacer(Modifier.height(44.dp))
                 }
             }
         }
         Spacer(Modifier.height(10.dp))
-        Surface(onClick = onOpenReport, shape = RoundedCornerShape(24.dp), color = AppTheme.colors.hero, modifier = Modifier.fillMaxWidth()) {
+        val reportPress = remember { MutableInteractionSource() }
+        Surface(
+            onClick = onOpenReport,
+            shape = RoundedCornerShape(24.dp),
+            color = AppTheme.colors.hero,
+            interactionSource = reportPress,
+            modifier = Modifier.reveal({ entrance.value }, 6).fillMaxWidth().pressScale(reportPress, pressed = 0.97f),
+        ) {
             Row(Modifier.padding(18.dp), verticalAlignment = Alignment.CenterVertically) {
                 Box(
                     Modifier.size(44.dp).clip(CircleShape).background(AppTheme.colors.heroTrack),

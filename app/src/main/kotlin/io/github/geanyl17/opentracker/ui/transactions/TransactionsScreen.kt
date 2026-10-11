@@ -1,5 +1,7 @@
 package io.github.geanyl17.opentracker.ui.transactions
 
+import androidx.compose.animation.animateContentSize
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.PaddingValues
@@ -22,6 +24,7 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.key
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.SolidColor
@@ -30,12 +33,15 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import io.github.geanyl17.opentracker.R
 import io.github.geanyl17.opentracker.ui.components.AppCard
 import io.github.geanyl17.opentracker.ui.components.AppIcon
+import io.github.geanyl17.opentracker.ui.components.EmphasizedDecelerate
 import io.github.geanyl17.opentracker.ui.components.EmptyHint
 import io.github.geanyl17.opentracker.ui.components.EntryRow
 import io.github.geanyl17.opentracker.ui.components.LocalMoney
 import io.github.geanyl17.opentracker.ui.components.LocalSnackbar
+import io.github.geanyl17.opentracker.ui.components.Pill
 import io.github.geanyl17.opentracker.ui.components.ScreenTitle
 import io.github.geanyl17.opentracker.ui.components.StatusBarScrim
+import io.github.geanyl17.opentracker.ui.components.TabBarSpace
 import io.github.geanyl17.opentracker.ui.components.dayLabel
 import io.github.geanyl17.opentracker.ui.theme.AppTheme
 import io.github.geanyl17.opentracker.ui.theme.tabular
@@ -43,13 +49,12 @@ import io.github.geanyl17.opentracker.ui.theme.tabular
 @Composable
 fun TransactionsScreen(
     viewModel: TransactionsViewModel,
-    tabBar: @Composable () -> Unit,
     onOpenEntry: (Long) -> Unit,
 ) {
     val state by viewModel.state.collectAsStateWithLifecycle()
     val money = LocalMoney.current
 
-    Scaffold(topBar = { StatusBarScrim() }, bottomBar = tabBar, snackbarHost = { SnackbarHost(LocalSnackbar.current) }) { padding ->
+    Scaffold(topBar = { StatusBarScrim() }, bottomBar = { TabBarSpace() }, snackbarHost = { SnackbarHost(LocalSnackbar.current) }) { padding ->
         LazyColumn(
             contentPadding = PaddingValues(top = padding.calculateTopPadding(), bottom = padding.calculateBottomPadding() + 16.dp),
             modifier = Modifier.fillMaxSize(),
@@ -61,25 +66,13 @@ fun TransactionsScreen(
             item {
                 Row(Modifier.padding(horizontal = 16.dp, vertical = 12.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     Filter.entries.forEach { option ->
-                        val selected = viewModel.filter == option
-                        Surface(
-                            onClick = { viewModel.filter = option },
-                            shape = CircleShape,
-                            color = if (selected) MaterialTheme.colorScheme.primary else AppTheme.colors.card,
-                        ) {
-                            Text(
-                                option.label,
-                                style = MaterialTheme.typography.labelLarge,
-                                color = if (selected) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onSurface,
-                                modifier = Modifier.padding(horizontal = 18.dp, vertical = 10.dp),
-                            )
-                        }
+                        Pill(option.label, selected = viewModel.filter == option, onClick = { viewModel.filter = option })
                     }
                 }
             }
             if (state.loaded && state.days.isEmpty()) {
-                item {
-                    AppCard(Modifier.padding(horizontal = 16.dp)) {
+                item(key = "empty") {
+                    AppCard(Modifier.animateItem().padding(horizontal = 16.dp)) {
                         EmptyHint(
                             if (state.isEmpty) {
                                 "No transactions yet. Tap + to add one, or tell the assistant what you spent."
@@ -94,6 +87,7 @@ fun TransactionsScreen(
                 item(key = "day-${day.date.toEpochDay()}") {
                     Row(
                         Modifier
+                            .animateItem()
                             .fillMaxWidth()
                             .padding(start = 28.dp, end = 28.dp, top = 12.dp, bottom = 8.dp),
                         verticalAlignment = Alignment.CenterVertically,
@@ -114,9 +108,17 @@ fun TransactionsScreen(
                     }
                 }
                 item(key = day.date.toEpochDay()) {
-                    AppCard(Modifier.padding(horizontal = 16.dp), padding = PaddingValues(6.dp)) {
+                    AppCard(
+                        Modifier
+                            .animateItem()
+                            .padding(horizontal = 16.dp)
+                            .animateContentSize(tween(300, easing = EmphasizedDecelerate)),
+                        padding = PaddingValues(6.dp),
+                    ) {
                         day.items.forEach { item ->
-                            EntryRow(item.entry, item.category, onClick = { onOpenEntry(item.entry.id) }, showDate = false)
+                            key(item.entry.id) {
+                                EntryRow(item.entry, item.category, onClick = { onOpenEntry(item.entry.id) }, showDate = false)
+                            }
                         }
                     }
                 }

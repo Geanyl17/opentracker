@@ -1,13 +1,17 @@
 package io.github.geanyl17.opentracker.ui.components
 
 import androidx.annotation.DrawableRes
-import androidx.compose.animation.core.Animatable
-import androidx.compose.animation.core.FastOutSlowInEasing
-import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.AnimatedContent
+import androidx.compose.animation.animateColorAsState
+import androidx.compose.animation.animateContentSize
 import androidx.compose.animation.core.tween
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -16,14 +20,16 @@ import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.WindowInsets
-import androidx.compose.foundation.layout.fillMaxHeight
+import androidx.compose.foundation.layout.add
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.navigationBars
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBars
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.windowInsetsBottomHeight
 import androidx.compose.foundation.layout.windowInsetsTopHeight
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -34,13 +40,13 @@ import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
@@ -79,9 +85,58 @@ fun AppCard(modifier: Modifier = Modifier, padding: PaddingValues = PaddingValue
 /** A round button with a soft background, for the actions in a screen's header. */
 @Composable
 fun CircleIconButton(@DrawableRes icon: Int, contentDescription: String, onClick: () -> Unit, modifier: Modifier = Modifier) {
-    Surface(onClick = onClick, shape = CircleShape, color = AppTheme.colors.card, modifier = modifier.size(44.dp)) {
+    val interaction = remember { MutableInteractionSource() }
+    Surface(
+        onClick = onClick,
+        shape = CircleShape,
+        color = AppTheme.colors.card,
+        interactionSource = interaction,
+        modifier = modifier.size(44.dp).pressScale(interaction),
+    ) {
         Box(contentAlignment = Alignment.Center) {
             AppIcon(icon, contentDescription, Modifier.size(22.dp), tint = MaterialTheme.colorScheme.onSurface)
+        }
+    }
+}
+
+/** The floating tab bar's height above the navigation bar. The tab screens leave this much room at the bottom. */
+val TabBarHeight = 84.dp
+
+val TabBarInsets: WindowInsets
+    @Composable get() = WindowInsets.navigationBars.add(WindowInsets(bottom = TabBarHeight))
+
+@Composable
+fun TabBarSpace() {
+    Spacer(Modifier.fillMaxWidth().windowInsetsBottomHeight(TabBarInsets))
+}
+
+/** A pill for filters and quick choices that fills in when selected. */
+@Composable
+fun Pill(label: String, selected: Boolean, onClick: () -> Unit, modifier: Modifier = Modifier, @DrawableRes icon: Int? = null) {
+    val colors = MaterialTheme.colorScheme
+    val container by animateColorAsState(if (selected) colors.primary else AppTheme.colors.card, tween(200), label = "pill")
+    val content by animateColorAsState(if (selected) colors.onPrimary else colors.onSurface, tween(200), label = "pill")
+    val iconTint by animateColorAsState(if (selected) colors.onPrimary else colors.onSurfaceVariant, tween(200), label = "pill")
+    val interaction = remember { MutableInteractionSource() }
+    Surface(
+        selected = selected,
+        onClick = onClick,
+        shape = CircleShape,
+        color = container,
+        interactionSource = interaction,
+        modifier = modifier.pressScale(interaction),
+    ) {
+        Row(
+            Modifier
+                .animateContentSize(tween(250, easing = EmphasizedDecelerate))
+                .padding(horizontal = 16.dp, vertical = 10.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            if (icon != null) {
+                AppIcon(icon, null, Modifier.size(18.dp), tint = iconTint)
+                Spacer(Modifier.width(8.dp))
+            }
+            Text(label, style = MaterialTheme.typography.labelLarge, color = content)
         }
     }
 }
@@ -121,13 +176,15 @@ fun TopBar(
         verticalAlignment = Alignment.CenterVertically,
     ) {
         CircleIconButton(backIcon, backDescription, onBack)
-        Text(
-            title,
-            style = MaterialTheme.typography.titleLarge,
-            maxLines = 1,
-            overflow = TextOverflow.Ellipsis,
+        AnimatedContent(
+            targetState = title,
+            transitionSpec = { fadeIn(tween(220, delayMillis = 60)) togetherWith fadeOut(tween(120)) },
+            contentAlignment = Alignment.CenterStart,
+            label = "title",
             modifier = Modifier.weight(1f).padding(horizontal = 14.dp),
-        )
+        ) { text ->
+            Text(text, style = MaterialTheme.typography.titleLarge, maxLines = 1, overflow = TextOverflow.Ellipsis)
+        }
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) { actions() }
     }
 }
@@ -183,15 +240,17 @@ fun CategoryIcon(name: String?, modifier: Modifier = Modifier, size: Dp = 44.dp)
 /** A bar split into colored parts, each a fraction of the whole, on a track. */
 @Composable
 fun SegmentedBar(parts: List<Pair<Float, Color>>, track: Color, modifier: Modifier = Modifier, height: Dp = 10.dp) {
-    val progress = remember { Animatable(0f) }
-    LaunchedEffect(Unit) { progress.animateTo(1f, tween(700, easing = FastOutSlowInEasing)) }
+    val total = parts.sumOf { it.first.coerceAtLeast(0f).toDouble() }.toFloat()
+    val fill = rememberFill(total)
     Canvas(modifier.fillMaxWidth().height(height).clip(CircleShape)) {
         drawRect(track)
+        if (total <= 0f) return@Canvas
         val gap = 2.dp.toPx()
+        val scale = fill.value / total
         var x = 0f
         parts.filter { it.first > 0f }.forEach { (fraction, color) ->
             if (x >= size.width) return@forEach
-            val width = (fraction * size.width * progress.value).coerceAtMost(size.width - x)
+            val width = (fraction * size.width * scale).coerceAtMost(size.width - x)
             drawRect(color, topLeft = Offset(x, 0f), size = Size((width - gap).coerceAtLeast(1.dp.toPx()), size.height))
             x += width
         }
@@ -200,31 +259,27 @@ fun SegmentedBar(parts: List<Pair<Float, Color>>, track: Color, modifier: Modifi
 
 @Composable
 fun ProgressBar(fraction: Float, color: Color, modifier: Modifier = Modifier, height: Dp = 8.dp) {
-    val animated by animateFloatAsState(fraction.coerceIn(0f, 1f), tween(600, easing = FastOutSlowInEasing), label = "progress")
-    Box(
-        modifier
-            .fillMaxWidth()
-            .height(height)
-            .clip(CircleShape)
-            .background(MaterialTheme.colorScheme.surfaceContainerHighest),
-    ) {
-        if (animated > 0f) {
-            Box(
-                Modifier
-                    .fillMaxWidth(animated.coerceAtLeast(0.03f))
-                    .fillMaxHeight()
-                    .clip(CircleShape)
-                    .background(color),
-            )
+    val fill = rememberFill(fraction.coerceIn(0f, 1f), tween(800, delayMillis = 100, easing = EmphasizedDecelerate))
+    val track = MaterialTheme.colorScheme.surfaceContainerHighest
+    Canvas(modifier.fillMaxWidth().height(height).clip(CircleShape)) {
+        drawRect(track)
+        val shown = fill.value
+        if (shown > 0f) {
+            drawRoundRect(color, size = Size(size.width * shown.coerceAtLeast(0.03f), size.height), cornerRadius = CornerRadius(size.height / 2))
         }
     }
 }
 
 /** A ring split into colored arcs, drawn with small gaps between them. */
 @Composable
-fun DonutChart(parts: List<Pair<Float, Color>>, modifier: Modifier = Modifier, thickness: Dp = 16.dp, center: @Composable () -> Unit = {}) {
-    val sweep = remember { Animatable(0f) }
-    LaunchedEffect(Unit) { sweep.animateTo(1f, tween(800, easing = FastOutSlowInEasing)) }
+fun DonutChart(
+    parts: List<Pair<Float, Color>>,
+    modifier: Modifier = Modifier,
+    thickness: Dp = 16.dp,
+    key: Any? = Unit,
+    center: @Composable () -> Unit = {},
+) {
+    val sweep = rememberPlayback(key, animation = tween(1000, delayMillis = 100, easing = EmphasizedDecelerate))
     val track = MaterialTheme.colorScheme.surfaceContainerHighest
     Box(modifier, contentAlignment = Alignment.Center) {
         Canvas(Modifier.matchParentSize()) {

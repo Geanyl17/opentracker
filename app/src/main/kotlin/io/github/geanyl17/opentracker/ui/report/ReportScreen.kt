@@ -1,6 +1,13 @@
 package io.github.geanyl17.opentracker.ui.report
 
 import android.content.ClipData
+import androidx.compose.animation.AnimatedContent
+import androidx.compose.animation.SizeTransform
+import androidx.compose.animation.animateContentSize
+import androidx.compose.animation.core.tween
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -50,6 +57,7 @@ import io.github.geanyl17.opentracker.R
 import io.github.geanyl17.opentracker.ui.components.AppCard
 import io.github.geanyl17.opentracker.ui.components.AppIcon
 import io.github.geanyl17.opentracker.ui.components.CircleIconButton
+import io.github.geanyl17.opentracker.ui.components.EmphasizedDecelerate
 import io.github.geanyl17.opentracker.ui.components.LocalSnackbar
 import io.github.geanyl17.opentracker.ui.components.Markdown
 import io.github.geanyl17.opentracker.ui.components.SectionTitle
@@ -105,7 +113,7 @@ fun ReportScreen(viewModel: ReportViewModel, onBack: () -> Unit, onOpenSettings:
             contentPadding = PaddingValues(start = 16.dp, end = 16.dp, top = padding.calculateTopPadding() + 4.dp, bottom = padding.calculateBottomPadding() + 24.dp),
             verticalArrangement = Arrangement.spacedBy(16.dp),
         ) {
-            item {
+            item(key = "run") {
                 RunPanel(
                     state = state,
                     paired = paired,
@@ -116,8 +124,8 @@ fun ReportScreen(viewModel: ReportViewModel, onBack: () -> Unit, onOpenSettings:
                 )
             }
             if (report != null) {
-                item {
-                    AppCard(padding = PaddingValues(start = 20.dp, end = 20.dp, top = 18.dp, bottom = 20.dp)) {
+                item(key = report.id) {
+                    AppCard(Modifier.animateItem(), padding = PaddingValues(start = 20.dp, end = 20.dp, top = 18.dp, bottom = 20.dp)) {
                         Text(
                             "Report from ${formatDate(report.createdAt)}",
                             style = MaterialTheme.typography.labelLarge,
@@ -130,8 +138,13 @@ fun ReportScreen(viewModel: ReportViewModel, onBack: () -> Unit, onOpenSettings:
             }
             val earlier = reports.filter { it.id != report?.id }
             if (earlier.isNotEmpty()) {
-                item {
-                    AppCard(padding = PaddingValues(start = 8.dp, end = 8.dp, top = 16.dp, bottom = 8.dp)) {
+                item(key = "earlier") {
+                    AppCard(
+                        Modifier
+                            .animateItem()
+                            .animateContentSize(tween(300, easing = EmphasizedDecelerate)),
+                        padding = PaddingValues(start = 8.dp, end = 8.dp, top = 16.dp, bottom = 8.dp),
+                    ) {
                         SectionTitle("Other reports", Modifier.padding(horizontal = 12.dp))
                         earlier.forEach { other ->
                             Row(
@@ -173,7 +186,7 @@ private fun RunPanel(
 ) {
     val app = AppTheme.colors
     Surface(shape = RoundedCornerShape(28.dp), color = app.hero, modifier = Modifier.fillMaxWidth()) {
-        Column(Modifier.padding(22.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
+        Column(Modifier.padding(22.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Box(Modifier.size(44.dp).clip(CircleShape).background(app.heroTrack), contentAlignment = Alignment.Center) {
                     AppIcon(R.drawable.ic_query_stats, null, Modifier.size(22.dp), tint = app.accent)
@@ -181,27 +194,39 @@ private fun RunPanel(
                 Spacer(Modifier.width(14.dp))
                 Text("A year of your spending, studied", style = MaterialTheme.typography.titleMedium, color = app.onHero)
             }
+            Spacer(Modifier.height(14.dp))
             Text(
                 "Antigravity on your PC writes a report: trends, recurring payments, unusual spending and ways to save. " +
                     "It uses your own Antigravity sign-in.",
                 style = MaterialTheme.typography.bodyMedium,
                 color = app.onHeroMuted,
             )
+            Spacer(Modifier.height(14.dp))
             val buttonColors = ButtonDefaults.buttonColors(containerColor = app.onHero, contentColor = app.hero)
-            when {
-                !paired -> Button(onClick = onOpenSettings, colors = buttonColors, modifier = Modifier.height(52.dp)) { Text("Pair with your PC") }
-                state is AnalysisState.Running -> Running(state, onCancel)
-                state is AnalysisState.Starting -> Row(verticalAlignment = Alignment.CenterVertically) {
-                    CircularProgressIndicator(Modifier.size(18.dp), color = app.accent, strokeWidth = 2.dp)
-                    Spacer(Modifier.width(12.dp))
-                    Text("Starting…", style = MaterialTheme.typography.bodyLarge, color = app.onHero)
-                }
-                else -> {
-                    if (state is AnalysisState.Failed) {
-                        Text(state.message, style = MaterialTheme.typography.bodyMedium, color = app.negative)
+            AnimatedContent(
+                targetState = if (paired) state else null,
+                contentKey = { it?.let { shown -> shown::class } },
+                transitionSpec = {
+                    fadeIn(tween(220, delayMillis = 90)) togetherWith fadeOut(tween(90)) using
+                        SizeTransform(clip = false) { _, _ -> tween(300, easing = EmphasizedDecelerate) }
+                },
+                label = "run",
+            ) { shown ->
+                when (shown) {
+                    null -> Button(onClick = onOpenSettings, colors = buttonColors, modifier = Modifier.height(52.dp)) { Text("Pair with your PC") }
+                    is AnalysisState.Running -> Running(shown, onCancel)
+                    is AnalysisState.Starting -> Row(Modifier.height(52.dp), verticalAlignment = Alignment.CenterVertically) {
+                        CircularProgressIndicator(Modifier.size(18.dp), color = app.accent, strokeWidth = 2.dp)
+                        Spacer(Modifier.width(12.dp))
+                        Text("Starting…", style = MaterialTheme.typography.bodyLarge, color = app.onHero)
                     }
-                    Button(onClick = onRun, colors = buttonColors, modifier = Modifier.height(52.dp)) {
-                        Text(if (hasReport) "Run a new analysis" else "Run analysis")
+                    else -> Column(verticalArrangement = Arrangement.spacedBy(14.dp)) {
+                        if (shown is AnalysisState.Failed) {
+                            Text(shown.message, style = MaterialTheme.typography.bodyMedium, color = app.negative)
+                        }
+                        Button(onClick = onRun, colors = buttonColors, modifier = Modifier.height(52.dp)) {
+                            Text(if (hasReport) "Run a new analysis" else "Run analysis")
+                        }
                     }
                 }
             }

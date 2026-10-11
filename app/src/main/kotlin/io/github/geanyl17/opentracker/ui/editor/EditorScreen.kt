@@ -1,15 +1,27 @@
 package io.github.geanyl17.opentracker.ui.editor
 
+import androidx.compose.animation.AnimatedContent
+import androidx.compose.animation.SizeTransform
+import androidx.compose.animation.animateColorAsState
+import androidx.compose.animation.core.Spring
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.spring
+import androidx.compose.animation.core.tween
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.background
+import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.foundation.layout.FlowRow
-import androidx.compose.foundation.layout.IntrinsicSize
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.consumeWindowInsets
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -18,8 +30,9 @@ import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.selection.selectable
+import androidx.compose.foundation.selection.selectableGroup
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
@@ -45,14 +58,21 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.SolidColor
+import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.LocalLayoutDirection
+import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardCapitalization
 import androidx.compose.ui.text.input.KeyboardType
+import androidx.compose.ui.text.rememberTextMeasurer
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import io.github.geanyl17.opentracker.R
@@ -60,15 +80,18 @@ import io.github.geanyl17.opentracker.data.Amounts
 import io.github.geanyl17.opentracker.data.Entry
 import io.github.geanyl17.opentracker.data.Kind
 import io.github.geanyl17.opentracker.data.Ledger
-import io.github.geanyl17.opentracker.ui.components.AppIcon
 import io.github.geanyl17.opentracker.ui.components.CategoryIcon
 import io.github.geanyl17.opentracker.ui.components.CategoryLooks
 import io.github.geanyl17.opentracker.ui.components.CircleIconButton
+import io.github.geanyl17.opentracker.ui.components.EmphasizedDecelerate
 import io.github.geanyl17.opentracker.ui.components.LocalMoney
+import io.github.geanyl17.opentracker.ui.components.Pill
 import io.github.geanyl17.opentracker.ui.components.TopBar
 import io.github.geanyl17.opentracker.ui.components.dayLabel
+import io.github.geanyl17.opentracker.ui.components.pressScale
 import io.github.geanyl17.opentracker.ui.theme.AppTheme
 import io.github.geanyl17.opentracker.ui.theme.tabular
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import java.time.Instant
 import java.time.LocalDate
@@ -98,6 +121,8 @@ fun EditorScreen(
 
     LaunchedEffect(entryId) {
         if (entryId == null) {
+            // Bringing up the keyboard holds up a few frames, so it waits until the screen has moved in.
+            delay(350)
             focus.requestFocus()
             return@LaunchedEffect
         }
@@ -191,20 +216,18 @@ fun EditorScreen(
 
             Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
                 Text("Category", style = MaterialTheme.typography.titleSmall, modifier = Modifier.padding(start = 4.dp))
-                FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    categories.filter { it.kind == kind }.forEach { category ->
-                        val selected = category.id == categoryId
-                        val color = CategoryLooks.of(category.name).color
-                        Surface(
-                            onClick = { categoryId = if (selected) null else category.id },
-                            shape = CircleShape,
-                            color = if (selected) color.copy(alpha = if (AppTheme.colors.dark) 0.28f else 0.16f) else AppTheme.colors.card,
-                            border = if (selected) BorderStroke(1.5.dp, color) else null,
-                        ) {
-                            Row(Modifier.padding(start = 6.dp, end = 14.dp, top = 6.dp, bottom = 6.dp), verticalAlignment = Alignment.CenterVertically) {
-                                CategoryIcon(category.name, size = 30.dp)
-                                Spacer(Modifier.width(8.dp))
-                                Text(category.name, style = MaterialTheme.typography.labelLarge)
+                AnimatedContent(
+                    targetState = kind,
+                    transitionSpec = {
+                        fadeIn(tween(220, delayMillis = 80)) togetherWith fadeOut(tween(100)) using
+                            SizeTransform { _, _ -> tween(300, easing = EmphasizedDecelerate) }
+                    },
+                    label = "categories",
+                ) { shownKind ->
+                    FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                        categories.filter { it.kind == shownKind }.forEach { category ->
+                            CategoryChip(category.name, selected = category.id == categoryId) {
+                                categoryId = if (category.id == categoryId) null else category.id
                             }
                         }
                     }
@@ -230,10 +253,10 @@ fun EditorScreen(
 
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 val today = LocalDate.now()
-                DateChip("Today", selected = date == today) { date = today }
-                DateChip("Yesterday", selected = date == today.minusDays(1)) { date = today.minusDays(1) }
+                Pill("Today", selected = date == today, onClick = { date = today })
+                Pill("Yesterday", selected = date == today.minusDays(1), onClick = { date = today.minusDays(1) })
                 val custom = date != today && date != today.minusDays(1)
-                DateChip(if (custom) dayLabel(date) else "Pick a date", selected = custom, icon = true) { pickingDate = true }
+                Pill(if (custom) dayLabel(date) else "Pick a date", selected = custom, onClick = { pickingDate = true }, icon = R.drawable.ic_calendar_today)
             }
             Spacer(Modifier.height(8.dp))
         }
@@ -258,24 +281,39 @@ fun EditorScreen(
     }
 }
 
+/** Expense or income, with the dark pill sliding under the chosen one. */
 @Composable
 private fun KindToggle(kind: Kind, onChange: (Kind) -> Unit) {
+    val colors = MaterialTheme.colorScheme
+    val position by animateFloatAsState(
+        Kind.entries.indexOf(kind).toFloat(),
+        spring(stiffness = Spring.StiffnessMediumLow),
+        label = "kind",
+    )
+    val direction = if (LocalLayoutDirection.current == LayoutDirection.Rtl) -1 else 1
     Surface(shape = CircleShape, color = AppTheme.colors.card, modifier = Modifier.fillMaxWidth()) {
-        Row(Modifier.padding(4.dp)) {
-            Kind.entries.forEach { option ->
-                val selected = kind == option
-                Surface(
-                    onClick = { onChange(option) },
-                    shape = CircleShape,
-                    color = if (selected) MaterialTheme.colorScheme.primary else AppTheme.colors.card,
-                    modifier = Modifier.weight(1f).height(44.dp),
-                ) {
-                    Box(contentAlignment = Alignment.Center) {
-                        Text(
-                            if (option == Kind.EXPENSE) "Expense" else "Income",
-                            style = MaterialTheme.typography.labelLarge,
-                            color = if (selected) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onSurfaceVariant,
-                        )
+        Box(Modifier.padding(4.dp).height(44.dp)) {
+            Box(
+                Modifier
+                    .fillMaxWidth(1f / Kind.entries.size)
+                    .fillMaxHeight()
+                    .graphicsLayer { translationX = direction * position * size.width }
+                    .clip(CircleShape)
+                    .background(colors.primary),
+            )
+            Row(Modifier.fillMaxSize().selectableGroup()) {
+                Kind.entries.forEach { option ->
+                    val selected = kind == option
+                    val text by animateColorAsState(if (selected) colors.onPrimary else colors.onSurfaceVariant, tween(200), label = "kind")
+                    Box(
+                        Modifier
+                            .weight(1f)
+                            .fillMaxHeight()
+                            .clip(CircleShape)
+                            .selectable(selected, role = Role.Tab, onClick = { onChange(option) }),
+                        contentAlignment = Alignment.Center,
+                    ) {
+                        Text(if (option == Kind.EXPENSE) "Expense" else "Income", style = MaterialTheme.typography.labelLarge, color = text)
                     }
                 }
             }
@@ -284,8 +322,34 @@ private fun KindToggle(kind: Kind, onChange: (Kind) -> Unit) {
 }
 
 @Composable
+private fun CategoryChip(name: String, selected: Boolean, onClick: () -> Unit) {
+    val look = CategoryLooks.of(name)
+    val fill = look.color.copy(alpha = if (AppTheme.colors.dark) 0.28f else 0.16f)
+    val container by animateColorAsState(if (selected) fill else AppTheme.colors.card, tween(200), label = "chip")
+    val border by animateColorAsState(if (selected) look.color else look.color.copy(alpha = 0f), tween(200), label = "chip")
+    val interaction = remember { MutableInteractionSource() }
+    Surface(
+        selected = selected,
+        onClick = onClick,
+        shape = CircleShape,
+        color = container,
+        border = BorderStroke(1.5.dp, border),
+        interactionSource = interaction,
+        modifier = Modifier.pressScale(interaction),
+    ) {
+        Row(Modifier.padding(start = 6.dp, end = 14.dp, top = 6.dp, bottom = 6.dp), verticalAlignment = Alignment.CenterVertically) {
+            CategoryIcon(name, size = 30.dp)
+            Spacer(Modifier.width(8.dp))
+            Text(name, style = MaterialTheme.typography.labelLarge)
+        }
+    }
+}
+
+@Composable
 private fun AmountField(amount: String, onChange: (String) -> Unit, focus: FocusRequester) {
     val style = MaterialTheme.typography.displayLarge.tabular().copy(textAlign = TextAlign.Center, color = MaterialTheme.colorScheme.onSurface)
+    val measurer = rememberTextMeasurer()
+    val width = with(LocalDensity.current) { measurer.measure(amount, style).size.width.toDp() } + 4.dp
     Column(Modifier.fillMaxWidth().padding(vertical = 12.dp), horizontalAlignment = Alignment.CenterHorizontally) {
         Row(verticalAlignment = Alignment.CenterVertically) {
             Text(LocalMoney.current.symbol, style = MaterialTheme.typography.displaySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
@@ -299,7 +363,7 @@ private fun AmountField(amount: String, onChange: (String) -> Unit, focus: Focus
                     textStyle = style,
                     cursorBrush = SolidColor(MaterialTheme.colorScheme.onSurface),
                     keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal, imeAction = ImeAction.Next),
-                    modifier = Modifier.width(IntrinsicSize.Min).widthIn(min = 4.dp).focusRequester(focus),
+                    modifier = Modifier.width(width).focusRequester(focus),
                 )
             }
         }
@@ -308,31 +372,5 @@ private fun AmountField(amount: String, onChange: (String) -> Unit, focus: Focus
             style = MaterialTheme.typography.bodySmall.copy(fontWeight = FontWeight.SemiBold),
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
-    }
-}
-
-@Composable
-private fun DateChip(label: String, selected: Boolean, icon: Boolean = false, onClick: () -> Unit) {
-    Surface(
-        onClick = onClick,
-        shape = CircleShape,
-        color = if (selected) MaterialTheme.colorScheme.primary else AppTheme.colors.card,
-    ) {
-        Row(Modifier.padding(horizontal = 16.dp, vertical = 10.dp), verticalAlignment = Alignment.CenterVertically) {
-            if (icon) {
-                AppIcon(
-                    R.drawable.ic_calendar_today,
-                    null,
-                    Modifier.size(18.dp),
-                    tint = if (selected) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onSurfaceVariant,
-                )
-                Spacer(Modifier.width(8.dp))
-            }
-            Text(
-                label,
-                style = MaterialTheme.typography.labelLarge,
-                color = if (selected) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onSurface,
-            )
-        }
     }
 }
