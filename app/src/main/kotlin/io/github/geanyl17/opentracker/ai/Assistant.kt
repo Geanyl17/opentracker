@@ -1,104 +1,91 @@
 package io.github.geanyl17.opentracker.ai
 
+import io.github.geanyl17.opentracker.data.Amounts
 import io.github.geanyl17.opentracker.data.Ledger
 import io.github.geanyl17.opentracker.data.SettingsStore
-import kotlinx.coroutines.CancellationException
+import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonObject
-import kotlinx.serialization.json.buildJsonObject
-import kotlinx.serialization.json.put
-import kotlinx.serialization.json.putJsonArray
-import kotlinx.serialization.json.putJsonObject
+import kotlinx.serialization.json.jsonObject
 
 /**
- * A conversation with Gemini that can read and change the ledger through function calls.
- *
- * Requests are stateless (store = false), so Google keeps nothing between turns: the history is sent each time,
- * including the model's thought steps, which have to come back unchanged for function calling to work.
+ * A conversation with Antigravity through the relay. Each message is a single request carrying the rules, a fresh
+ * snapshot of the data and the recent conversation; the answer's actions are applied here, on the phone.
  */
 class Assistant(
-    private val gemini: GeminiClient,
+    private val relay: RelayClient,
     private val ledger: Ledger,
     private val settings: SettingsStore,
 ) {
-    data class Reply(val text: String, val actions: List<AssistantAction>, val error: String? = null)
+    data class Reply(val text: String, val actions: List<AssistantAction>, val problems: List<String>)
+
+    private data class Exchange(val user: String, val reply: String, val done: List<String>)
 
     private val tools = AssistantTools(ledger, settings)
-    private val history = mutableListOf<JsonObject>()
+    private val history = ArrayDeque<Exchange>()
 
     suspend fun send(text: String): Reply {
-        val start = history.size
+        val context = FinanceContext.load(ledger, settings)
+        val answer = readAnswer(relay.run(prompt(context, text), context.settings.assistantModel, AssistantTools.schema))
         val actions = mutableListOf<AssistantAction>()
-        history += buildJsonObject {
-            put("type", "user_input")
-            putJsonArray("content") {
-                add(
-                    buildJsonObject {
-                        put("type", "text")
-                        put("text", text)
-                    },
-                )
+        val problems = mutableListOf<String>()
+        answer.actions.forEach { action ->
+            when (val outcome = tools.apply(action, context)) {
+                is AssistantTools.Outcome.Applied -> actions += outcome.action
+                is AssistantTools.Outcome.Rejected -> problems += outcome.reason
             }
         }
-        try {
-            repeat(MAX_ROUNDS) {
-                val context = FinanceContext.load(ledger, settings)
-                val steps = gemini.create(request(context)).steps
-                history += steps
-                val calls = steps.functionCalls()
-                if (calls.isEmpty()) {
-                    val reply = steps.outputText()
-                    if (reply.isBlank() && actions.isEmpty()) throw GeminiException("Gemini didn't answer. Try asking another way.")
-                    trim()
-                    return Reply(reply, actions)
-                }
-                calls.forEach { call ->
-                    val outcome = tools.run(call, context)
-                    outcome.action?.let(actions::add)
-                    history += buildJsonObject {
-                        put("type", "function_result")
-                        put("name", call.name)
-                        put("call_id", call.id)
-                        putJsonArray("result") {
-                            add(
-                                buildJsonObject {
-                                    put("type", "text")
-                                    put("text", outcome.result.toString())
-                                },
-                            )
-                        }
-                    }
-                }
-            }
-            throw GeminiException("The assistant got stuck. Try asking another way.")
-        } catch (e: Exception) {
-            history.subList(start, history.size).clear()
-            if (e is CancellationException || actions.isEmpty()) throw e
-            return Reply("", actions, e.message)
-        }
+        if (answer.reply.isBlank() && actions.isEmpty()) throw RelayException("Antigravity didn't answer. Try asking another way.")
+        history.addLast(Exchange(text, answer.reply, actions.map(::summary) + problems.map { "Couldn't: $it" }))
+        while (history.size > MAX_EXCHANGES) history.removeFirst()
+        return Reply(answer.reply, actions, problems)
     }
 
     suspend fun undo(action: AssistantAction) = tools.undo(action)
 
     fun reset() = history.clear()
 
-    private fun request(context: FinanceContext) = buildJsonObject {
-        put("model", context.settings.model)
-        put("store", false)
-        put("system_instruction", context.systemInstruction())
-        put("input", JsonArray(history))
-        put("tools", tools.declarations(context))
-        putJsonObject("generation_config") { put("thinking_level", "low") }
+    private fun prompt(context: FinanceContext, text: String) = buildString {
+        appendLine(context.assistantRules())
+        appendLine()
+        appendLine(context.overview())
+        appendLine(context.recentTransactions())
+        if (history.isNotEmpty()) {
+            appendLine("Conversation so far, oldest first:")
+            history.forEach { exchange ->
+                appendLine("User: ${exchange.user}")
+                appendLine("You: ${exchange.reply}")
+                exchange.done.forEach { appendLine("(App: $it)") }
+            }
+            appendLine()
+        }
+        append("The user says: $text")
     }
 
-    /** Keeps the last few exchanges, cutting only at the start of one. */
-    private fun trim() {
-        val starts = history.indices.filter { history[it].type == "user_input" }
-        if (starts.size > MAX_EXCHANGES) history.subList(0, starts[starts.size - MAX_EXCHANGES]).clear()
+    private fun summary(action: AssistantAction): String = when (action) {
+        is AssistantAction.Added -> with(action.entry) {
+            "recorded transaction $id, ${kind.label} ${Amounts.plain(amount)} in ${action.category ?: "no category"} on $date"
+        }
+        is AssistantAction.Updated -> "updated transaction ${action.after.id}"
+        is AssistantAction.Deleted -> "deleted transaction ${action.entry.id}"
+        is AssistantAction.BudgetChanged ->
+            "set the ${action.category?.name ?: "overall monthly"} budget to ${action.budget?.let(Amounts::plain) ?: "none"}"
     }
 
     private companion object {
-        const val MAX_ROUNDS = 6
-        const val MAX_EXCHANGES = 12
+        const val MAX_EXCHANGES = 8
     }
+}
+
+data class Answer(val reply: String, val actions: List<JsonObject>)
+
+/** Reads the structured answer, or JSON in the text if agy didn't return one, or else treats the text as the reply. */
+internal fun readAnswer(result: RelayResult): Answer {
+    val json = result.structured
+        ?: runCatching { Json.parseToJsonElement(result.text.substringAfter("```json").substringBefore("```").trim()).jsonObject }.getOrNull()
+        ?: return Answer(result.text.trim(), emptyList())
+    return Answer(
+        reply = json.string("reply")?.trim().orEmpty(),
+        actions = (json["actions"] as? JsonArray).orEmpty().mapNotNull { it as? JsonObject },
+    )
 }

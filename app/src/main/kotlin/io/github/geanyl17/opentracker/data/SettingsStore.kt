@@ -23,16 +23,16 @@ data class Settings(
     val monthlyBudget: Long? = null,
     val theme: ThemeMode = ThemeMode.SYSTEM,
     val dynamicColor: Boolean = false,
-    val model: String = DEFAULT_MODEL,
-    val agent: String = DEFAULT_AGENT,
+    val assistantModel: String = DEFAULT_ASSISTANT_MODEL,
+    val analysisModel: String = DEFAULT_ANALYSIS_MODEL,
     val speakReplies: Boolean = true,
     val speechLanguage: String = "",
     val pendingAnalysis: String? = null,
     val pendingAnalysisSince: Long? = null,
 ) {
     companion object {
-        const val DEFAULT_MODEL = "gemini-3.8-flash"
-        const val DEFAULT_AGENT = "antigravity-preview-09-2026"
+        const val DEFAULT_ASSISTANT_MODEL = "gemini-3.8-flash-low"
+        const val DEFAULT_ANALYSIS_MODEL = "gemini-3.8-flash-high"
     }
 }
 
@@ -52,8 +52,8 @@ class SettingsStore(private val context: Context) {
         val monthlyBudget = longPreferencesKey("monthly_budget")
         val theme = stringPreferencesKey("theme")
         val dynamicColor = booleanPreferencesKey("dynamic_color")
-        val model = stringPreferencesKey("model")
-        val agent = stringPreferencesKey("agent")
+        val assistantModel = stringPreferencesKey("assistant_model")
+        val analysisModel = stringPreferencesKey("analysis_model")
         val speakReplies = booleanPreferencesKey("speak_replies")
         val speechLanguage = stringPreferencesKey("speech_language")
         val pendingAnalysis = stringPreferencesKey("pending_analysis")
@@ -67,8 +67,8 @@ class SettingsStore(private val context: Context) {
             monthlyBudget = this[Keys.monthlyBudget],
             theme = this[Keys.theme]?.let { runCatching { ThemeMode.valueOf(it) }.getOrNull() } ?: defaults.theme,
             dynamicColor = this[Keys.dynamicColor] ?: defaults.dynamicColor,
-            model = this[Keys.model] ?: defaults.model,
-            agent = this[Keys.agent] ?: defaults.agent,
+            assistantModel = this[Keys.assistantModel] ?: defaults.assistantModel,
+            analysisModel = this[Keys.analysisModel] ?: defaults.analysisModel,
             speakReplies = this[Keys.speakReplies] ?: defaults.speakReplies,
             speechLanguage = this[Keys.speechLanguage] ?: defaults.speechLanguage,
             pendingAnalysis = this[Keys.pendingAnalysis],
@@ -81,8 +81,8 @@ class SettingsStore(private val context: Context) {
         prefs.setOrRemove(Keys.monthlyBudget, monthlyBudget)
         prefs[Keys.theme] = theme.name
         prefs[Keys.dynamicColor] = dynamicColor
-        prefs[Keys.model] = model
-        prefs[Keys.agent] = agent
+        prefs[Keys.assistantModel] = assistantModel
+        prefs[Keys.analysisModel] = analysisModel
         prefs[Keys.speakReplies] = speakReplies
         prefs[Keys.speechLanguage] = speechLanguage
         prefs.setOrRemove(Keys.pendingAnalysis, pendingAnalysis)
@@ -94,20 +94,37 @@ class SettingsStore(private val context: Context) {
     }
 }
 
-/** The API key lives in its own file, which backups leave out (see res/xml/data_extraction_rules.xml). */
+/** Where the relay on the user's computer is, and how to trust it. */
+data class Pairing(val address: String, val code: String, val fingerprint: String)
+
+/** The pairing lives in its own file, which backups leave out (see res/xml/data_extraction_rules.xml). */
 class SecretStore(context: Context) {
     private val prefs = context.getSharedPreferences("secrets", Context.MODE_PRIVATE)
-    private val key = MutableStateFlow(prefs.getString(API_KEY, null))
+    private val current = MutableStateFlow(read())
 
-    val apiKey: StateFlow<String?> = key.asStateFlow()
+    val pairing: StateFlow<Pairing?> = current.asStateFlow()
 
-    fun setApiKey(value: String?) {
-        val cleaned = value?.trim()?.ifEmpty { null }
-        prefs.edit { if (cleaned == null) remove(API_KEY) else putString(API_KEY, cleaned) }
-        key.value = cleaned
+    fun pair(pairing: Pairing?) {
+        prefs.edit {
+            clear()
+            if (pairing != null) {
+                putString(ADDRESS, pairing.address)
+                putString(CODE, pairing.code)
+                putString(FINGERPRINT, pairing.fingerprint)
+            }
+        }
+        current.value = pairing
     }
 
+    private fun read(): Pairing? = Pairing(
+        address = prefs.getString(ADDRESS, null) ?: return null,
+        code = prefs.getString(CODE, null) ?: return null,
+        fingerprint = prefs.getString(FINGERPRINT, null) ?: return null,
+    )
+
     private companion object {
-        const val API_KEY = "gemini_api_key"
+        const val ADDRESS = "relay_address"
+        const val CODE = "relay_code"
+        const val FINGERPRINT = "relay_fingerprint"
     }
 }

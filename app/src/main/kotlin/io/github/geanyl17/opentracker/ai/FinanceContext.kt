@@ -8,6 +8,7 @@ import io.github.geanyl17.opentracker.data.Ledger
 import io.github.geanyl17.opentracker.data.Money
 import io.github.geanyl17.opentracker.data.Settings
 import io.github.geanyl17.opentracker.data.SettingsStore
+import io.github.geanyl17.opentracker.data.TransactionsCsv
 import io.github.geanyl17.opentracker.data.summarize
 import java.time.LocalDate
 import java.time.YearMonth
@@ -15,7 +16,7 @@ import java.time.format.DateTimeFormatter
 import java.time.format.TextStyle
 import java.util.Locale
 
-/** What the assistant knows about the user's money on each turn, rebuilt from the database every time. */
+/** What the model knows about the user's money, rebuilt from the database for every request. */
 class FinanceContext(
     val today: LocalDate,
     val settings: Settings,
@@ -23,31 +24,34 @@ class FinanceContext(
     private val entries: List<Entry>,
 ) {
     val currency: String = settings.currency
-    private val symbol = Money.of(currency).symbol
+    val symbol: String = Money.of(currency).symbol
 
     fun category(id: Long?): Category? = categories.firstOrNull { it.id == id }
 
-    fun systemInstruction(): String = buildString {
-        appendLine(
-            """
-            You are the assistant inside OpenTracker, the user's personal budget tracker app. The user often talks to you by voice and hears your replies read aloud.
+    fun assistantRules(): String = """
+        You are the assistant inside OpenTracker, the user's personal budget tracker app. The user often talks to you by voice and hears your reply read aloud.
 
-            How to reply:
-            - Answer in one to three short sentences unless the user asks for detail or advice. Reply in the language the user speaks.
-            - Plain text only: no markdown, lists, tables or emoji.
-            - Say amounts with the currency symbol and round sensibly, for example ${symbol}1,250 rather than 1250.00.
-            - Use only the data below. Never invent transactions; if something isn't in the data, say so.
-            - For insights, compare with budgets and earlier months, name the biggest categories and anything unusual, and give specific, practical suggestions. Don't lecture.
+        Answer with JSON: "reply" is what you say to the user, and "actions" lists the changes the app should make, in order. The app makes the changes as it shows your reply, with an Undo button.
 
-            Recording money:
-            - When the user says they spent or received money, record it with add_transaction straight away, without asking first. The app shows an Undo button.
-            - Pick the closest category. Use a short note describing what it was. Ask only if the amount is missing.
-            - Several purchases in one message means one add_transaction call each.
-            - "That" or "the last one" means the most recent transaction you recorded in this conversation, otherwise the one with the highest id.
-            - Delete only when the user clearly asks for it. After recording, confirm in a few words and, if the category has a budget, mention what's left of it.
-            """.trimIndent(),
-        )
-        appendLine()
+        How to reply:
+        - One to three short sentences, unless the user asks for detail or advice. Reply in the language the user speaks.
+        - Plain text only: no markdown, lists, tables or emoji.
+        - Say amounts with the currency symbol and round sensibly, for example ${symbol}1,250 rather than 1250.00.
+        - Use only the data below. Never invent transactions; if something isn't in the data, say so.
+        - For insights, compare with budgets and earlier months, name the biggest categories and anything unusual, and give specific, practical suggestions. Don't lecture.
+
+        Actions:
+        - add_transaction: kind (expense or income), amount, category, note, and date (leave it out for today). One for each purchase or payment the user mentions, straight away and without asking first.
+        - update_transaction: id, plus only the fields that change.
+        - delete_transaction: id. Only when the user clearly asks for it.
+        - set_budget: amount, and category for a category budget; leave category out for the overall monthly budget. 0 removes the budget.
+        - Use the closest existing category. If the amount is missing, ask for it and leave actions empty.
+        - "That" or "the last one" means the transaction you most recently recorded in this conversation, otherwise the one with the highest id.
+        - After recording, say so in a few words and, if the category has a budget, what's left of it after this.
+    """.trimIndent()
+
+    /** Today's date, the currency, budgets, categories and a year of monthly totals. */
+    fun overview(): String = buildString {
         appendLine("Today is ${today.dayOfWeek.getDisplayName(TextStyle.FULL, Locale.ENGLISH)}, $today. Currency: $currency ($symbol). All amounts are in $currency.")
         appendLine("Overall monthly budget: ${settings.monthlyBudget?.let(Amounts::plain) ?: "not set"}")
         appendLine()
@@ -65,15 +69,23 @@ class FinanceContext(
                 .joinToString("; ") { "${it.name} ${Amounts.plain(it.spent)}" }
             appendLine("${month.format(monthFormat)}: expenses ${Amounts.plain(summary.spent)}, income ${Amounts.plain(summary.income)}; $byCategory")
         }
-        appendLine()
-        val detailFrom = thisMonth.minusMonths(DETAILED_MONTHS - 1).atDay(1)
-        val recent = entries.filter { !it.date.isBefore(detailFrom) }.take(MAX_DETAILED)
-        appendLine("Transactions since $detailFrom, newest first (id | date | type | amount | category | note):")
+    }
+
+    /** The last few months of transactions with their ids, so the assistant can change them. */
+    fun recentTransactions(): String = buildString {
+        val from = YearMonth.from(today).minusMonths(DETAILED_MONTHS - 1).atDay(1)
+        val recent = entries.filter { !it.date.isBefore(from) }.take(MAX_DETAILED)
+        appendLine("Transactions since $from, newest first (id | date | type | amount | category | note):")
         if (recent.isEmpty()) appendLine("(none)")
         recent.forEach { e ->
             appendLine("${e.id} | ${e.date} | ${e.kind.label} | ${Amounts.plain(e.amount)} | ${category(e.categoryId)?.name ?: "Uncategorized"} | ${e.note.replace('\n', ' ')}")
         }
     }
+
+    /** Every transaction of the past year, as CSV. */
+    fun transactionsCsv(): String = TransactionsCsv.export(entries, categories)
+
+    val isEmpty: Boolean get() = entries.isEmpty()
 
     companion object {
         private const val MONTHS_OF_TOTALS = 12L

@@ -99,14 +99,14 @@ fun AssistantScreen(
     val messages by viewModel.messages.collectAsStateWithLifecycle()
     val busy by viewModel.busy.collectAsStateWithLifecycle()
     val voice by viewModel.voice.collectAsStateWithLifecycle()
-    val apiKey by viewModel.apiKey.collectAsStateWithLifecycle()
+    val pairing by viewModel.pairing.collectAsStateWithLifecycle()
     val settings by viewModel.settings.collectAsStateWithLifecycle()
     val context = LocalContext.current
     val snackbar = LocalSnackbar.current
     val scope = rememberCoroutineScope()
     val listState = rememberLazyListState()
     var input by rememberSaveable { mutableStateOf("") }
-    val connected = apiKey != null
+    val connected = pairing != null
 
     val micPermission = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
         if (granted) {
@@ -139,8 +139,7 @@ fun AssistantScreen(
     LifecycleEventEffect(Lifecycle.Event.ON_STOP) { viewModel.cancelListening() }
     DisposableEffect(Unit) { onDispose { viewModel.cancelListening() } }
     LaunchedEffect(messages.size, busy) {
-        val count = messages.size + if (busy) 1 else 0
-        if (count > 0) listState.animateScrollToItem(count - 1)
+        if (messages.isNotEmpty()) listState.animateScrollToItem(0)
     }
 
     Scaffold(
@@ -181,19 +180,21 @@ fun AssistantScreen(
                 onSuggestion = ::send,
                 onOpenReport = onOpenReport,
             )
+            // Laid out from the bottom up, so the newest message stays in view when the keyboard or tab bar moves.
             else -> LazyColumn(
                 state = listState,
+                reverseLayout = true,
                 contentPadding = PaddingValues(top = padding.calculateTopPadding() + 8.dp, bottom = padding.calculateBottomPadding() + 16.dp),
                 modifier = Modifier.fillMaxSize(),
             ) {
-                items(messages, key = { it.id }) { message ->
+                if (busy) item(key = "thinking") { Thinking() }
+                items(messages.asReversed(), key = { it.id }) { message ->
                     when (message) {
                         is ChatMessage.User -> UserBubble(message.text)
                         is ChatMessage.Reply -> ReplyBlock(message, onUndo = { viewModel.undo(message, it) })
                         is ChatMessage.Failure -> FailureBlock(message, onRetry = { viewModel.retry(message) })
                     }
                 }
-                if (busy) item(key = "thinking") { Thinking() }
             }
         }
     }
@@ -396,7 +397,7 @@ private fun Intro(padding: PaddingValues, pendingAnalysis: Boolean, onSuggestion
                         if (pendingAnalysis) {
                             "Analysis in progress…"
                         } else {
-                            "Google's Antigravity agent studies all your transactions and writes a full report. Takes a few minutes."
+                            "Antigravity studies a year of your transactions and writes a full report. Takes a minute or two."
                         },
                         style = MaterialTheme.typography.bodyMedium,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
@@ -417,14 +418,14 @@ private fun ConnectPrompt(padding: PaddingValues, onOpenSettings: () -> Unit) {
             .padding(24.dp),
         verticalArrangement = Arrangement.spacedBy(16.dp),
     ) {
-        Text("Connect Gemini", style = MaterialTheme.typography.headlineSmall)
+        Text("Connect Antigravity", style = MaterialTheme.typography.headlineSmall)
         Text(
-            "The assistant and the Antigravity analysis run on Google's Gemini API with your own API key. " +
-                "You can create one for free in Google AI Studio, then paste it in Settings.",
+            "The assistant runs on the Antigravity CLI on your computer, signed in with your own Google account. " +
+                "Start the OpenTracker relay on your PC, then pair this phone with it.",
             style = MaterialTheme.typography.bodyLarge,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
-        Button(onClick = onOpenSettings) { Text("Add API key") }
+        Button(onClick = onOpenSettings) { Text("Pair with your PC") }
     }
 }
 

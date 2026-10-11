@@ -1,10 +1,16 @@
 package io.github.geanyl17.opentracker.ui.settings
 
 import android.net.Uri
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.setValue
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import io.github.geanyl17.opentracker.AppContainer
+import io.github.geanyl17.opentracker.ai.Model
+import io.github.geanyl17.opentracker.ai.RelayException
 import io.github.geanyl17.opentracker.data.Category
+import io.github.geanyl17.opentracker.data.Pairing
 import io.github.geanyl17.opentracker.data.Settings
 import io.github.geanyl17.opentracker.data.TransactionsCsv
 import kotlinx.coroutines.Dispatchers
@@ -17,6 +23,19 @@ import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
+sealed interface PairState {
+    data object Idle : PairState
+    data object Working : PairState
+    data object Done : PairState
+    data class Failed(val message: String) : PairState
+}
+
+sealed interface ModelsState {
+    data object Loading : ModelsState
+    data class Loaded(val models: List<Model>) : ModelsState
+    data class Failed(val message: String) : ModelsState
+}
+
 class SettingsViewModel(private val container: AppContainer) : ViewModel() {
     private val ledger = container.ledger
     private val messages = Channel<String>(Channel.BUFFERED)
@@ -25,14 +44,50 @@ class SettingsViewModel(private val container: AppContainer) : ViewModel() {
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), null)
     val categories: StateFlow<List<Category>> = ledger.categories
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
-    val apiKey: StateFlow<String?> = container.secrets.apiKey
+    val pairing: StateFlow<Pairing?> = container.secrets.pairing
     val events: Flow<String> = messages.receiveAsFlow()
+
+    var pairState by mutableStateOf<PairState>(PairState.Idle)
+        private set
+
+    var models by mutableStateOf<ModelsState>(ModelsState.Loading)
+        private set
 
     fun update(transform: (Settings) -> Settings) {
         viewModelScope.launch { container.settings.update(transform) }
     }
 
-    fun setApiKey(value: String?) = container.secrets.setApiKey(value)
+    fun pair(address: String, code: String) {
+        pairState = PairState.Working
+        viewModelScope.launch {
+            pairState = try {
+                container.secrets.pair(container.relay.pair(address, code))
+                PairState.Done
+            } catch (e: RelayException) {
+                PairState.Failed(e.message ?: "Pairing failed.")
+            }
+        }
+    }
+
+    fun unpair() {
+        container.secrets.pair(null)
+        pairState = PairState.Idle
+    }
+
+    fun resetPairState() {
+        pairState = PairState.Idle
+    }
+
+    fun loadModels() {
+        models = ModelsState.Loading
+        viewModelScope.launch {
+            models = try {
+                ModelsState.Loaded(container.relay.models())
+            } catch (e: RelayException) {
+                ModelsState.Failed(e.message ?: "Couldn't get the models from your PC.")
+            }
+        }
+    }
 
     fun saveCategory(category: Category) {
         viewModelScope.launch {

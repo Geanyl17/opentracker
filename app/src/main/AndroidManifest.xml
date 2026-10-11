@@ -2,8 +2,10 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android"
     xmlns:tools="http://schemas.android.com/tools">
 
-    <!-- The assistant and the Antigravity analysis talk to the Gemini API. -->
+    <!-- The assistant and the analysis talk to the OpenTracker relay on the user's computer. -->
     <uses-permission android:name="android.permission.INTERNET" />
+    <!-- Android 17 asks the user before an app can reach devices on the local network, like that computer. -->
+    <uses-permission android:name="android.permission.ACCESS_LOCAL_NETWORK" />
     <!-- Voice input. -->
     <uses-permission android:name="android.permission.RECORD_AUDIO" />
 

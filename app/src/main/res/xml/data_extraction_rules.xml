@@ -1,5 +1,5 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- Backups keep transactions and settings but never the Gemini API key. -->
+<!-- Backups keep transactions and settings but never the pairing with the relay. -->
 <data-extraction-rules>
     <cloud-backup>
         <exclude domain="sharedpref" path="secrets.xml" />

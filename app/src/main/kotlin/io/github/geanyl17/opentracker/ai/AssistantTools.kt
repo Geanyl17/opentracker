@@ -6,11 +6,9 @@ import io.github.geanyl17.opentracker.data.Entry
 import io.github.geanyl17.opentracker.data.Kind
 import io.github.geanyl17.opentracker.data.Ledger
 import io.github.geanyl17.opentracker.data.SettingsStore
-import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonObjectBuilder
 import kotlinx.serialization.json.JsonPrimitive
-import kotlinx.serialization.json.buildJsonArray
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.put
@@ -27,104 +25,19 @@ sealed interface AssistantAction {
     data class BudgetChanged(val category: Category?, val previous: Long?, val budget: Long?) : AssistantAction
 }
 
+/** Applies the changes the model asks for in the "actions" of its answer. */
 class AssistantTools(private val ledger: Ledger, private val settings: SettingsStore) {
-    class Outcome(val result: JsonObject, val action: AssistantAction? = null)
-
-    fun declarations(context: FinanceContext): JsonArray {
-        val names = context.categories.map { it.name }.distinct()
-        val amount = "Positive amount in ${context.currency}, for example 250.5"
-        return buildJsonArray {
-            add(
-                function("add_transaction", "Records money the user spent or received.", required = listOf("kind", "amount", "category")) {
-                    enum("kind", "expense for money spent, income for money received", listOf("expense", "income"))
-                    number("amount", amount)
-                    if (names.isEmpty()) string("category", "Category name") else enum("category", "Category name", names)
-                    string("note", "Short description of what it was, for example \"Lunch with Ana\"")
-                    string("date", "YYYY-MM-DD. Leave out for today.")
-                },
-            )
-            add(
-                function("update_transaction", "Changes a recorded transaction. Only pass the fields that change.", required = listOf("id")) {
-                    integer("id", "The transaction id")
-                    enum("kind", "expense or income", listOf("expense", "income"))
-                    number("amount", amount)
-                    string("category", "Category name")
-                    string("note", "Short description")
-                    string("date", "YYYY-MM-DD")
-                },
-            )
-            add(
-                function("delete_transaction", "Deletes a recorded transaction.", required = listOf("id")) {
-                    integer("id", "The transaction id")
-                },
-            )
-            add(
-                function(
-                    "set_budget",
-                    "Sets the monthly budget for an expense category, or the overall monthly budget when no category is given. An amount of 0 removes the budget.",
-                    required = listOf("amount"),
-                ) {
-                    number("amount", "Monthly budget in ${context.currency}")
-                    string("category", "Expense category name. Leave out for the overall budget.")
-                },
-            )
-        }
+    sealed interface Outcome {
+        data class Applied(val action: AssistantAction) : Outcome
+        data class Rejected(val reason: String) : Outcome
     }
 
-    suspend fun run(call: FunctionCall, context: FinanceContext): Outcome {
-        val args = call.arguments
-        return when (call.name) {
-            "add_transaction" -> {
-                val kind = args.kind() ?: Kind.EXPENSE
-                val amount = args.amount() ?: return failure("amount must be a positive number")
-                val category = context.find(args.string("category"), kind)
-                val entry = Entry(
-                    kind = kind,
-                    amount = amount,
-                    categoryId = category?.id,
-                    note = args.string("note").orEmpty().trim(),
-                    date = args.date() ?: context.today,
-                )
-                val id = ledger.add(entry)
-                Outcome(success { put("id", id) }, AssistantAction.Added(entry.copy(id = id), category?.name))
-            }
-            "update_transaction" -> {
-                val id = args.long("id") ?: return failure("id is required")
-                val before = ledger.entry(id) ?: return failure("there is no transaction with id $id")
-                val kind = args.kind() ?: before.kind
-                val category = if (args.containsKey("category")) context.find(args.string("category"), kind) else context.category(before.categoryId)
-                val after = before.copy(
-                    kind = kind,
-                    amount = args.amount() ?: before.amount,
-                    categoryId = category?.id,
-                    note = args.string("note")?.trim() ?: before.note,
-                    date = args.date() ?: before.date,
-                )
-                ledger.update(after)
-                Outcome(success(), AssistantAction.Updated(before, after, category?.name))
-            }
-            "delete_transaction" -> {
-                val id = args.long("id") ?: return failure("id is required")
-                val entry = ledger.entry(id) ?: return failure("there is no transaction with id $id")
-                ledger.delete(entry)
-                Outcome(success(), AssistantAction.Deleted(entry, context.category(entry.categoryId)?.name))
-            }
-            "set_budget" -> {
-                val budget = args.amount(allowZero = true) ?: return failure("amount must be a number, 0 to remove")
-                val name = args.string("category")
-                if (name.isNullOrBlank()) {
-                    val previous = settings.current().monthlyBudget
-                    settings.update { it.copy(monthlyBudget = budget.takeIf { b -> b > 0 }) }
-                    Outcome(success(), AssistantAction.BudgetChanged(null, previous, budget.takeIf { it > 0 }))
-                } else {
-                    val category = context.find(name, Kind.EXPENSE, strict = true)
-                        ?: return failure("there is no expense category named $name")
-                    ledger.saveCategory(category.copy(budget = budget.takeIf { it > 0 }))
-                    Outcome(success(), AssistantAction.BudgetChanged(category, category.budget, budget.takeIf { it > 0 }))
-                }
-            }
-            else -> failure("unknown function ${call.name}")
-        }
+    suspend fun apply(action: JsonObject, context: FinanceContext): Outcome = when (action.string("type")) {
+        "add_transaction" -> add(action, context)
+        "update_transaction" -> update(action, context)
+        "delete_transaction" -> delete(action, context)
+        "set_budget" -> setBudget(action, context)
+        else -> Outcome.Rejected("unknown action ${action.string("type")}")
     }
 
     suspend fun undo(action: AssistantAction) {
@@ -139,6 +52,58 @@ class AssistantTools(private val ledger: Ledger, private val settings: SettingsS
                     ledger.saveCategory(action.category.copy(budget = action.previous))
                 }
         }
+    }
+
+    private suspend fun add(args: JsonObject, context: FinanceContext): Outcome {
+        val kind = args.kind() ?: Kind.EXPENSE
+        val amount = args.amount() ?: return Outcome.Rejected("the amount must be a positive number")
+        val category = context.find(args.string("category"), kind)
+        val entry = Entry(
+            kind = kind,
+            amount = amount,
+            categoryId = category?.id,
+            note = args.string("note").orEmpty().trim(),
+            date = args.date() ?: context.today,
+        )
+        return Outcome.Applied(AssistantAction.Added(entry.copy(id = ledger.add(entry)), category?.name))
+    }
+
+    private suspend fun update(args: JsonObject, context: FinanceContext): Outcome {
+        val id = args.long("id") ?: return Outcome.Rejected("updating needs a transaction id")
+        val before = ledger.entry(id) ?: return Outcome.Rejected("there's no transaction $id")
+        val kind = args.kind() ?: before.kind
+        val category = if (args.containsKey("category")) context.find(args.string("category"), kind) else context.category(before.categoryId)
+        val after = before.copy(
+            kind = kind,
+            amount = args.amount() ?: before.amount,
+            categoryId = category?.id,
+            note = args.string("note")?.trim() ?: before.note,
+            date = args.date() ?: before.date,
+        )
+        ledger.update(after)
+        return Outcome.Applied(AssistantAction.Updated(before, after, category?.name))
+    }
+
+    private suspend fun delete(args: JsonObject, context: FinanceContext): Outcome {
+        val id = args.long("id") ?: return Outcome.Rejected("deleting needs a transaction id")
+        val entry = ledger.entry(id) ?: return Outcome.Rejected("there's no transaction $id")
+        ledger.delete(entry)
+        return Outcome.Applied(AssistantAction.Deleted(entry, context.category(entry.categoryId)?.name))
+    }
+
+    private suspend fun setBudget(args: JsonObject, context: FinanceContext): Outcome {
+        val amount = args.amount(allowZero = true) ?: return Outcome.Rejected("the budget must be a number")
+        val budget = amount.takeIf { it > 0 }
+        val name = args.string("category")
+        if (name.isNullOrBlank()) {
+            val previous = settings.current().monthlyBudget
+            settings.update { it.copy(monthlyBudget = budget) }
+            return Outcome.Applied(AssistantAction.BudgetChanged(null, previous, budget))
+        }
+        val category = context.find(name, Kind.EXPENSE, strict = true)
+            ?: return Outcome.Rejected("there's no expense category called $name")
+        ledger.saveCategory(category.copy(budget = budget))
+        return Outcome.Applied(AssistantAction.BudgetChanged(category, category.budget, budget))
     }
 
     private fun FinanceContext.find(name: String?, kind: Kind, strict: Boolean = false): Category? {
@@ -164,61 +129,52 @@ class AssistantTools(private val ledger: Ledger, private val settings: SettingsS
 
     private fun JsonObject.date(): LocalDate? = string("date")?.let { runCatching { LocalDate.parse(it) }.getOrNull() }
 
-    private fun success(extra: JsonObjectBuilder.() -> Unit = {}) = buildJsonObject {
-        put("ok", true)
-        extra()
-    }
-
-    private fun failure(message: String) = Outcome(
-        buildJsonObject {
-            put("ok", false)
-            put("error", message)
-        },
-    )
-
     private fun String.toBigDecimalOrNull(): BigDecimal? = runCatching { BigDecimal(trim()) }.getOrNull()
-}
 
-private class ParametersBuilder {
-    val properties = mutableMapOf<String, JsonObject>()
-
-    fun string(name: String, description: String) = prop(name, "string", description)
-
-    fun number(name: String, description: String) = prop(name, "number", description)
-
-    fun integer(name: String, description: String) = prop(name, "integer", description)
-
-    fun enum(name: String, description: String, values: List<String>) {
-        properties[name] = buildJsonObject {
-            put("type", "string")
-            put("description", description)
-            putJsonArray("enum") { values.forEach { add(JsonPrimitive(it)) } }
-        }
-    }
-
-    private fun prop(name: String, type: String, description: String) {
-        properties[name] = buildJsonObject {
-            put("type", type)
-            put("description", description)
-        }
-    }
-}
-
-private fun function(
-    name: String,
-    description: String,
-    required: List<String>,
-    parameters: ParametersBuilder.() -> Unit,
-): JsonObject {
-    val params = ParametersBuilder().apply(parameters)
-    return buildJsonObject {
-        put("type", "function")
-        put("name", name)
-        put("description", description)
-        putJsonObject("parameters") {
+    companion object {
+        /** The shape of every answer. It stays the same between requests, so the relay can start agy ahead of time. */
+        val schema: JsonObject = buildJsonObject {
             put("type", "object")
-            put("properties", JsonObject(params.properties))
-            putJsonArray("required") { required.forEach { add(JsonPrimitive(it)) } }
+            putJsonObject("properties") {
+                property("reply", "string", "What to tell the user. Plain text, read aloud.")
+                putJsonObject("actions") {
+                    put("type", "array")
+                    put("description", "Changes for the app to make, in order. Empty when nothing should change.")
+                    putJsonObject("items") {
+                        put("type", "object")
+                        putJsonObject("properties") {
+                            putJsonObject("type") {
+                                put("type", "string")
+                                putJsonArray("enum") {
+                                    listOf("add_transaction", "update_transaction", "delete_transaction", "set_budget")
+                                        .forEach { add(JsonPrimitive(it)) }
+                                }
+                            }
+                            property("id", "integer", "The transaction id, for update_transaction and delete_transaction")
+                            putJsonObject("kind") {
+                                put("type", "string")
+                                putJsonArray("enum") { listOf("expense", "income").forEach { add(JsonPrimitive(it)) } }
+                            }
+                            property("amount", "number", "A positive amount. For set_budget, 0 removes the budget.")
+                            property("category", "string", "An existing category name")
+                            property("note", "string", "A short description of what it was")
+                            property("date", "string", "YYYY-MM-DD. Leave out for today.")
+                        }
+                        putJsonArray("required") { add(JsonPrimitive("type")) }
+                    }
+                }
+            }
+            putJsonArray("required") {
+                add(JsonPrimitive("reply"))
+                add(JsonPrimitive("actions"))
+            }
+        }
+
+        private fun JsonObjectBuilder.property(name: String, type: String, description: String) {
+            putJsonObject(name) {
+                put("type", type)
+                put("description", description)
+            }
         }
     }
 }

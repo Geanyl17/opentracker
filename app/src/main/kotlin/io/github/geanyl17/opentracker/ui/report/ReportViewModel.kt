@@ -4,7 +4,7 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import io.github.geanyl17.opentracker.AppContainer
 import io.github.geanyl17.opentracker.ai.Analyst
-import io.github.geanyl17.opentracker.ai.GeminiException
+import io.github.geanyl17.opentracker.ai.RelayException
 import io.github.geanyl17.opentracker.data.Report
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Job
@@ -34,9 +34,9 @@ class ReportViewModel(private val container: AppContainer) : ViewModel() {
 
     val reports: StateFlow<List<Report>> = container.ledger.reports
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
-    val hasKey: StateFlow<Boolean> = container.secrets.apiKey
+    val paired: StateFlow<Boolean> = container.secrets.pairing
         .map { it != null }
-        .stateIn(viewModelScope, SharingStarted.Eagerly, container.secrets.apiKey.value != null)
+        .stateIn(viewModelScope, SharingStarted.Eagerly, container.secrets.pairing.value != null)
 
     init {
         viewModelScope.launch {
@@ -82,7 +82,7 @@ class ReportViewModel(private val container: AppContainer) : ViewModel() {
             while (true) {
                 val status = try {
                     analyst.check(id)
-                } catch (e: GeminiException) {
+                } catch (e: RelayException) {
                     if (e.status in 400..499 && e.status != 429) {
                         analyst.cancel(id)
                         Analyst.Status.Failed(e.message ?: "The analysis failed.")

@@ -4,6 +4,9 @@
 build/
 local.properties
 
+# Python
+__pycache__/
+
 # IDEs
 .idea/
 .fleet/

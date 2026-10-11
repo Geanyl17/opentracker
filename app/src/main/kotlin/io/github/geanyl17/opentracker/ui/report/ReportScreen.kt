@@ -60,7 +60,7 @@ import java.time.format.FormatStyle
 fun ReportScreen(viewModel: ReportViewModel, onBack: () -> Unit, onOpenSettings: () -> Unit) {
     val state by viewModel.state.collectAsStateWithLifecycle()
     val reports by viewModel.reports.collectAsStateWithLifecycle()
-    val hasKey by viewModel.hasKey.collectAsStateWithLifecycle()
+    val paired by viewModel.paired.collectAsStateWithLifecycle()
     var selectedId by rememberSaveable { mutableStateOf<Long?>(null) }
     val report = reports.firstOrNull { it.id == selectedId } ?: reports.firstOrNull()
     val listState = rememberLazyListState()
@@ -101,7 +101,7 @@ fun ReportScreen(viewModel: ReportViewModel, onBack: () -> Unit, onOpenSettings:
             item {
                 RunPanel(
                     state = state,
-                    hasKey = hasKey,
+                    paired = paired,
                     hasReport = report != null,
                     onRun = viewModel::run,
                     onCancel = viewModel::cancel,
@@ -149,7 +149,7 @@ fun ReportScreen(viewModel: ReportViewModel, onBack: () -> Unit, onOpenSettings:
 @Composable
 private fun RunPanel(
     state: AnalysisState,
-    hasKey: Boolean,
+    paired: Boolean,
     hasReport: Boolean,
     onRun: () -> Unit,
     onCancel: () -> Unit,
@@ -157,13 +157,13 @@ private fun RunPanel(
 ) {
     Column(Modifier.padding(horizontal = 24.dp, vertical = 8.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
         Text(
-            "Google's Antigravity agent reads all your transactions in a private sandbox with no internet access, " +
-                "analyzes them with code and writes a report: trends, recurring payments, unusual spending and ways to save.",
+            "Antigravity on your PC studies a year of your transactions and writes a report: trends, recurring payments, " +
+                "unusual spending and ways to save. It uses your own Antigravity sign-in.",
             style = MaterialTheme.typography.bodyMedium,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
         when {
-            !hasKey -> Button(onClick = onOpenSettings) { Text("Add API key") }
+            !paired -> Button(onClick = onOpenSettings) { Text("Pair with your PC") }
             state is AnalysisState.Running -> Running(state, onCancel)
             state is AnalysisState.Starting -> Row(verticalAlignment = Alignment.CenterVertically) {
                 CircularProgressIndicator(Modifier.size(18.dp), strokeWidth = 2.dp)
@@ -205,7 +205,7 @@ private fun Running(state: AnalysisState.Running, onCancel: () -> Unit) {
             if (state.retrying) {
                 "Connection problem. Still trying…"
             } else {
-                "This usually takes a few minutes. You can leave this screen; the analysis keeps running on Google's servers."
+                "This usually takes a minute or two. You can leave this screen; the analysis keeps running on your PC."
             },
             style = MaterialTheme.typography.bodySmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant,

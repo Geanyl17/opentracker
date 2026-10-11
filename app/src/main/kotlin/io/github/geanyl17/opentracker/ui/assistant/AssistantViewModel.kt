@@ -5,6 +5,7 @@ import androidx.lifecycle.viewModelScope
 import io.github.geanyl17.opentracker.AppContainer
 import io.github.geanyl17.opentracker.ai.Assistant
 import io.github.geanyl17.opentracker.ai.AssistantAction
+import io.github.geanyl17.opentracker.data.Pairing
 import io.github.geanyl17.opentracker.data.Settings
 import io.github.geanyl17.opentracker.voice.SpeechInput
 import io.github.geanyl17.opentracker.voice.Speaker
@@ -29,7 +30,7 @@ sealed interface ChatMessage {
 data class ActionItem(val action: AssistantAction, val undone: Boolean = false)
 
 class AssistantViewModel(container: AppContainer) : ViewModel() {
-    private val assistant = Assistant(container.gemini, container.ledger, container.settings)
+    private val assistant = Assistant(container.relay, container.ledger, container.settings)
     private val speech = SpeechInput(container.context)
     private val speaker = Speaker(container.context)
     private var nextId = 0L
@@ -41,7 +42,7 @@ class AssistantViewModel(container: AppContainer) : ViewModel() {
     val busy: StateFlow<Boolean> = _busy.asStateFlow()
 
     val voice: StateFlow<VoiceState> = speech.state
-    val apiKey: StateFlow<String?> = container.secrets.apiKey
+    val pairing: StateFlow<Pairing?> = container.secrets.pairing
     val settings: StateFlow<Settings> = container.settings.settings
         .stateIn(viewModelScope, SharingStarted.Eagerly, Settings())
 
@@ -54,7 +55,8 @@ class AssistantViewModel(container: AppContainer) : ViewModel() {
         viewModelScope.launch {
             try {
                 val reply = assistant.send(message)
-                add(ChatMessage.Reply(nextId++, reply.text, reply.actions.map(::ActionItem), reply.error))
+                val problems = reply.problems.takeIf { it.isNotEmpty() }?.joinToString("\n") { "Couldn't do that: $it." }
+                add(ChatMessage.Reply(nextId++, reply.text, reply.actions.map(::ActionItem), problems))
                 if (settings.value.speakReplies && reply.text.isNotBlank()) {
                     speaker.speak(reply.text, settings.value.speechLanguage)
                 }
