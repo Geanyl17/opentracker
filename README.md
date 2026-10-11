@@ -21,7 +21,7 @@ The screenshots use demo data.
 
 ## Install
 
-OpenTracker runs on Android 8.0 and newer. Build it yourself (see [Building](#building)), or download the debug APK from the latest successful run under **Actions** on GitHub and open it on your phone.
+OpenTracker runs on Android 8.0 and newer. Download `OpenTracker-<version>.apk` from the [latest release](https://github.com/Geanyl17/opentracker/releases/latest) and open it on your phone; Android asks you to allow installing apps from your browser or file manager the first time. Releases are signed with the same key, so newer versions install over older ones and keep your data.
 
 ## Connect Antigravity
 
@@ -62,11 +62,12 @@ The app only uses Antigravity through Google's own CLI. Signing other apps in wi
 You need JDK 17 or newer and the Android SDK. [Android Studio](https://developer.android.com/studio) includes both.
 
 ```bash
-./gradlew :app:installDebug   # build and install on a connected phone or emulator
-./gradlew check               # run tests and lint
+./gradlew :app:installDebug     # build and install on a connected phone or emulator
+./gradlew check                 # run tests and lint
+./gradlew :app:assembleRelease  # build a signed release APK
 ```
 
-Each CI run on GitHub also builds a debug APK, which you can download from the run's page under **Actions**.
+Release builds are signed with the keystore that `keystore.properties` points to (`storeFile`, `storePassword`, `keyAlias`, `keyPassword`). It isn't in the repository, so without it the release APK comes out unsigned.
 
 ## How it's built
 
