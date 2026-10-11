@@ -161,8 +161,16 @@ class RelayClient(private val pairing: () -> Pairing?) {
         }
     }
 
-    private fun unreachable(target: Pairing) =
-        "Can't reach your PC at ${target.address}. Check that the relay is running and that your phone is on the same network."
+    private fun unreachable(target: Pairing): String {
+        val host = target.address.substringBeforeLast(':')
+        val parts = host.split('.')
+        val tailscale = host.endsWith(".ts.net") || (parts.size == 4 && parts[0] == "100" && parts[1].toIntOrNull() in 64..127)
+        return if (tailscale) {
+            "Can't reach your PC at ${target.address}. Check that Tailscale is on, on this phone and on your PC, and that the relay is running."
+        } else {
+            "Can't reach your PC at ${target.address}. Check that the relay is running and that your phone is on the same network."
+        }
+    }
 
     private fun describe(status: Int, error: String?): String = when (status) {
         401 -> "Your PC didn't accept the pairing code. Pair again in Settings."
