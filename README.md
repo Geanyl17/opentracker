@@ -11,8 +11,8 @@ Log what you spend by voice or by hand, see where your money goes each month, an
 - **Free software,** licensed GPL-3.0-or-later.
 
 <p>
-  <img src="docs/screenshots/home.png" width="200" alt="Home: spending this month against the budget, by category">
-  <img src="docs/screenshots/transactions.png" width="200" alt="Transactions grouped by day, with search and filters">
+  <img src="docs/screenshots/home.png" width="200" alt="Home: the month's spending against the budget, split by category">
+  <img src="docs/screenshots/activity.png" width="200" alt="Activity: transactions grouped by day, with search and filters">
   <img src="docs/screenshots/assistant.png" width="200" alt="The assistant recording two purchases, with Undo buttons">
   <img src="docs/screenshots/home-dark.png" width="200" alt="Home in the dark theme">
 </p>
@@ -85,4 +85,4 @@ All under `app/src/main/kotlin/io/github/geanyl17/opentracker/`. The relay is `r
 
 OpenTracker is free software: you can redistribute it and/or modify it under the terms of the [GNU General Public License](LICENSE), version 3 or (at your option) any later version.
 
-Icons are [Material Symbols](https://github.com/google/material-design-icons) by Google, under the Apache License 2.0.
+The typeface is [Plus Jakarta Sans](https://github.com/tokotype/PlusJakartaSans), under the [SIL Open Font License 1.1](docs/licenses/PlusJakartaSans-OFL.txt). Icons are [Material Symbols](https://github.com/google/material-design-icons) by Google, under the Apache License 2.0.
